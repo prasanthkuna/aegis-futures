@@ -1,5 +1,8 @@
 {
   "framework": "nextjs",
   "buildCommand": "pnpm run build",
-  "installCommand": "pnpm install"
+  "installCommand": "pnpm install",
+  "env": {
+    "NEXT_PUBLIC_API_BASE_URL": "https://staging-aegis-futures-utk2.encr.app"
+  }
 }

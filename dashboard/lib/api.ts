@@ -1,4 +1,6 @@
-const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const base =
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  "https://staging-aegis-futures-utk2.encr.app";
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
