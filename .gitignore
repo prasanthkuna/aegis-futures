@@ -1,0 +1,9 @@
+/.encore
+encore.gen.go
+node_modules/
+.next/
+.env
+.env.local
+*.exe
+encore.gen.cue
+/encore.gen
