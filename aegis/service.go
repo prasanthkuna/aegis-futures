@@ -36,8 +36,8 @@ func initService() (*Service, error) {
 	ex := execution.New(bc)
 	g := guardian.New(bc, ex)
 	led := ledger.New(db)
-	tg := alerts.NewTelegram(secrets.TelegramBotToken, secrets.TelegramChatID)
-	cg := coinglass.NewClient(secrets.CoinglassAPIKey)
+	tg := alerts.NewTelegram("", "") // optional: wire env later if needed
+	cg := coinglass.NewClient("")    // context from Binance; CoinGlass not required
 
 	rt := engine.NewRuntime(hub, uni, r, ex, g, led, tg, cg, bc)
 	svc := &Service{rt: rt, hub: hub}

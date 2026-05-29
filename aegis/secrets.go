@@ -1,13 +1,11 @@
 package aegis
 
-// Secrets are configured via Encore: encore secret set --dev <Name>
+// Required Encore Cloud secrets only (optional Telegram/CoinGlass removed from struct).
+// Set via: encore secret set --type prod,dev <Name>
 var secrets struct {
 	BinanceAPIKey       string
 	BinanceAPISecret    string
 	BinanceUseTestnet   string
-	CoinglassAPIKey     string
-	TelegramBotToken    string
-	TelegramChatID      string
 	AegisTradingEnabled string
 	AegisEnv            string
 }

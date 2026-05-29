@@ -13,14 +13,11 @@ Binance USDⓈ-M order-flow momentum bot — Encore Go backend + Next.js dashboa
 ```powershell
 $env:PATH = "C:\Program Files\Go\bin;$env:PATH"
 cd c:\Users\PrashanthKuna\binance
-encore secret set --dev BinanceAPIKey
-encore secret set --dev BinanceAPISecret
-encore secret set --dev BinanceUseTestnet
-encore secret set --dev CoinglassAPIKey
-encore secret set --dev TelegramBotToken
-encore secret set --dev TelegramChatID
-encore secret set --dev AegisTradingEnabled
-encore secret set --dev AegisEnv
+encore secret set --type prod,dev BinanceAPIKey
+encore secret set --type prod,dev BinanceAPISecret
+echo false | encore secret set --type prod,dev BinanceUseTestnet
+echo false | encore secret set --type prod,dev AegisTradingEnabled
+echo production | encore secret set --type prod,dev AegisEnv
 ```
 
 Use `false` for `BinanceUseTestnet` and `AegisTradingEnabled` until ready for live orders.
