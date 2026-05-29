@@ -2,7 +2,10 @@ package aegis
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"math"
+	"sort"
 	"time"
 
 	"encore.app/binanceex"
@@ -50,11 +53,69 @@ func (s *Service) DashboardSummary(ctx context.Context) (*model.DashboardSummary
 			sum.AvailableMargin = binanceex.ParseFloat(acct.AvailableBalance)
 		}
 	}
+	var fundingPaid float64
+	_ = db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(funding), 0) FROM trades WHERE exit_time IS NOT NULL
+	`).Scan(&fundingPaid)
+	sum.FundingPaid = fundingPaid
+	sum.CurrentDrawdown = s.maxDrawdown(ctx)
+
 	if pos := s.rt.OpenPosition(); pos != nil {
 		sum.HasOpenPosition = true
 		sum.LastTradeSymbol = pos.Symbol
+		st, ok := s.rt.Hub.Snapshot(pos.Symbol)
+		if ok && pos.EntryPrice > 0 {
+			sum.OpenPnL = unrealizedPnL(pos.Side, pos.EntryPrice, st.LastPrice, pos.Quantity)
+		}
+	} else {
+		var lastSym sql.NullString
+		if err := db.QueryRow(ctx, `
+			SELECT symbol FROM trades
+			ORDER BY COALESCE(exit_time, entry_time) DESC LIMIT 1
+		`).Scan(&lastSym); err == nil && lastSym.Valid {
+			sum.LastTradeSymbol = lastSym.String
+		}
 	}
 	return sum, nil
+}
+
+func unrealizedPnL(side model.Side, entry, current, qty float64) float64 {
+	if qty <= 0 || current <= 0 {
+		return 0
+	}
+	if side == model.SideLong {
+		return (current - entry) * qty
+	}
+	return (entry - current) * qty
+}
+
+func (s *Service) maxDrawdown(ctx context.Context) float64 {
+	rows, err := db.Query(ctx, `
+		SELECT net_pnl FROM trades
+		WHERE exit_time IS NOT NULL
+		ORDER BY exit_time ASC
+	`)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	var peak, maxDD float64
+	var cum float64
+	for rows.Next() {
+		var pnl float64
+		if err := rows.Scan(&pnl); err != nil {
+			return 0
+		}
+		cum += pnl
+		if cum > peak {
+			peak = cum
+		}
+		dd := peak - cum
+		if dd > maxDD {
+			maxDD = dd
+		}
+	}
+	return maxDD
 }
 
 type RadarResponse struct {
@@ -74,21 +135,46 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 		res := strategy.Evaluate(strategy.Input{
 			Symbol: sym, State: st, CoinGlassScore: cg, BTCChange5mPct: btc,
 		})
-		cvdState := "flat"
-		if res.CVDComponent >= 0.55 {
-			cvdState = "up"
-		} else if res.CVDComponent <= 0.35 {
-			cvdState = "down"
-		}
+		dec := radarDecision(res)
 		items = append(items, model.SymbolSnapshot{
 			Symbol: sym, Price: st.LastPrice, QuoteVolume24h: st.QuoteVolume24h,
 			SpreadBps: st.SpreadBps, VolumeSurge: res.VolumeComponent,
-			CVDState: cvdState, CoinGlassScore: cg,
+			CVDState: res.CVDState, TakerFlow: res.TakerFlow,
+			OIFundingContext: oiFundingContext(cg), CoinGlassScore: cg,
 			SessionScore: res.SessionComponent, TradeScore: res.TradeScore,
-			Decision: res.Decision, Reason: res.Reason, UpdatedAt: time.Now().UTC(),
+			Decision: dec, Reason: res.Reason, UpdatedAt: time.Now().UTC(),
 		})
 	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TradeScore > items[j].TradeScore
+	})
+	for i := range items {
+		items[i].Rank = i + 1
+	}
+	if items == nil {
+		items = []model.SymbolSnapshot{}
+	}
 	return &RadarResponse{Items: items}, nil
+}
+
+func radarDecision(res strategy.Result) string {
+	if res.Decision == "trade" {
+		return "trade"
+	}
+	if res.TradeScore >= config.MinTradeScore*0.85 {
+		return "watch"
+	}
+	return "skip"
+}
+
+func oiFundingContext(cgScore float64) string {
+	if cgScore > 0.3 {
+		return "supportive"
+	}
+	if cgScore < -0.3 {
+		return "crowded"
+	}
+	return "neutral"
 }
 
 type OpenPositionsResponse struct {
@@ -99,13 +185,27 @@ type OpenPositionsResponse struct {
 func (s *Service) OpenPositions(ctx context.Context) (*OpenPositionsResponse, error) {
 	pos := s.rt.OpenPosition()
 	if pos == nil {
-		return &OpenPositionsResponse{}, nil
+		return &OpenPositionsResponse{Positions: []model.OpenPositionView{}}, nil
 	}
 	st, _ := s.rt.Hub.Snapshot(pos.Symbol)
+	upnl := unrealizedPnL(pos.Side, pos.EntryPrice, st.LastPrice, pos.Quantity)
+	rMult := 0.0
+	if config.RiskPerTradeUSD > 0 {
+		rMult = upnl / config.RiskPerTradeUSD
+	}
+	secs := int64(0)
+	if pos.EntryTime > 0 {
+		secs = (time.Now().UnixMilli() - pos.EntryTime) / 1000
+	}
+	guard := "active"
+	if !pos.HasStop {
+		guard = "stop_missing"
+	}
 	return &OpenPositionsResponse{Positions: []model.OpenPositionView{{
-		Symbol: pos.Symbol, Side: pos.Side, CurrentPrice: st.LastPrice,
-		Quantity: pos.Quantity, Leverage: config.MaxLeverage, StopPrice: pos.StopPrice,
-		GuardianStatus: "active",
+		Symbol: pos.Symbol, Side: pos.Side, EntryPrice: pos.EntryPrice,
+		CurrentPrice: st.LastPrice, Quantity: pos.Quantity, Leverage: config.MaxLeverage,
+		StopPrice: pos.StopPrice, TakeProfitPrice: pos.TakeProfitPrice,
+		UnrealizedPnL: upnl, RMultiple: rMult, TimeInTradeSec: secs, GuardianStatus: guard,
 	}}}, nil
 }
 
@@ -118,10 +218,15 @@ type ClosedTrade struct {
 	EntryPrice float64    `json:"entryPrice"`
 	ExitPrice  *float64   `json:"exitPrice"`
 	Quantity   float64    `json:"quantity"`
-	NetPnL     float64    `json:"netPnl"`
+	GrossPnL   float64    `json:"grossPnl"`
 	Fees       float64    `json:"fees"`
+	Funding    float64    `json:"funding"`
+	NetPnL     float64    `json:"netPnl"`
+	RMultiple  float64    `json:"rMultiple"`
 	ExitReason string     `json:"exitReason"`
 	TradeScore float64    `json:"tradeScore"`
+	Session    *string    `json:"session"`
+	MistakeTag *string    `json:"mistakeTag"`
 }
 
 type TradesResponse struct {
@@ -132,7 +237,8 @@ type TradesResponse struct {
 func (s *Service) ClosedTrades(ctx context.Context) (*TradesResponse, error) {
 	rows, err := db.Query(ctx, `
 		SELECT id, symbol, side, entry_time, exit_time, entry_price, exit_price,
-			quantity, net_pnl, fees, exit_reason, trade_score
+			quantity, gross_pnl, fees, funding, net_pnl, r_multiple,
+			exit_reason, trade_score, session
 		FROM trades WHERE exit_time IS NOT NULL
 		ORDER BY exit_time DESC LIMIT 100
 	`)
@@ -140,12 +246,12 @@ func (s *Service) ClosedTrades(ctx context.Context) (*TradesResponse, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var trades []ClosedTrade
+	trades := make([]ClosedTrade, 0)
 	for rows.Next() {
 		var t ClosedTrade
 		if err := rows.Scan(&t.ID, &t.Symbol, &t.Side, &t.EntryTime, &t.ExitTime,
-			&t.EntryPrice, &t.ExitPrice, &t.Quantity, &t.NetPnL, &t.Fees,
-			&t.ExitReason, &t.TradeScore); err != nil {
+			&t.EntryPrice, &t.ExitPrice, &t.Quantity, &t.GrossPnL, &t.Fees, &t.Funding,
+			&t.NetPnL, &t.RMultiple, &t.ExitReason, &t.TradeScore, &t.Session); err != nil {
 			return nil, err
 		}
 		trades = append(trades, t)
@@ -182,7 +288,7 @@ func (s *Service) pnlSeries(ctx context.Context, grain string) (*PnLPointRespons
 		return nil, err
 	}
 	defer rows.Close()
-	var points []PnLPoint
+	points := make([]PnLPoint, 0)
 	for rows.Next() {
 		var p PnLPoint
 		if err := rows.Scan(&p.Period, &p.NetPnL); err != nil {
@@ -218,7 +324,7 @@ func (s *Service) RiskEvents(ctx context.Context) (*RiskEventsResponse, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var events []RiskEvent
+	events := make([]RiskEvent, 0)
 	for rows.Next() {
 		var e RiskEvent
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Severity, &e.Type, &e.Symbol,
@@ -228,6 +334,109 @@ func (s *Service) RiskEvents(ctx context.Context) (*RiskEventsResponse, error) {
 		events = append(events, e)
 	}
 	return &RiskEventsResponse{Events: events}, nil
+}
+
+type StrategyTruth struct {
+	WinRate              float64 `json:"winRate"`
+	AvgWin               float64 `json:"avgWin"`
+	AvgLoss              float64 `json:"avgLoss"`
+	ProfitFactor         float64 `json:"profitFactor"`
+	ExpectancyPerTrade   float64 `json:"expectancyPerTrade"`
+	ExpectancyAfterFees  float64 `json:"expectancyAfterFees"`
+	MaxDrawdown          float64 `json:"maxDrawdown"`
+	FeesPctOfGrossProfit float64 `json:"feesPctOfGrossProfit"`
+	BestSymbol           string  `json:"bestSymbol"`
+	WorstSymbol          string  `json:"worstSymbol"`
+	BestSession          string  `json:"bestSession"`
+	WorstSession         string  `json:"worstSession"`
+	LongPnL              float64 `json:"longPnl"`
+	ShortPnL             float64 `json:"shortPnl"`
+	PostOnlyFillRate     float64 `json:"postOnlyFillRate"`
+	MissedTradeCount     int     `json:"missedTradeCount"`
+	StopMissingIncidents int     `json:"stopMissingIncidents"`
+	StateMismatchCount   int     `json:"stateMismatchCount"`
+	ClosedTradeCount     int     `json:"closedTradeCount"`
+}
+
+//encore:api public method=GET path=/dashboard/strategy-truth
+func (s *Service) StrategyTruth(ctx context.Context) (*StrategyTruth, error) {
+	out := &StrategyTruth{}
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM missed_trades`).Scan(&out.MissedTradeCount)
+	_ = db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM risk_events
+		WHERE type ILIKE '%stop%' OR message ILIKE '%stop%'
+	`).Scan(&out.StopMissingIncidents)
+	_ = db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM risk_events WHERE type = 'state_mismatch'
+	`).Scan(&out.StateMismatchCount)
+
+	var wins, total int
+	var avgWin, avgLoss, sumWin, sumLossAbs, grossProfit, totalFees, expectancy float64
+	_ = db.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE net_pnl > 0),
+			COUNT(*),
+			COALESCE(AVG(net_pnl) FILTER (WHERE net_pnl > 0), 0),
+			COALESCE(AVG(net_pnl) FILTER (WHERE net_pnl <= 0), 0),
+			COALESCE(SUM(net_pnl) FILTER (WHERE net_pnl > 0), 0),
+			COALESCE(SUM(ABS(net_pnl)) FILTER (WHERE net_pnl < 0), 0),
+			COALESCE(SUM(gross_pnl) FILTER (WHERE gross_pnl > 0), 0),
+			COALESCE(SUM(fees), 0),
+			COALESCE(AVG(net_pnl), 0)
+		FROM trades WHERE exit_time IS NOT NULL
+	`).Scan(&wins, &total, &avgWin, &avgLoss, &sumWin, &sumLossAbs, &grossProfit, &totalFees, &expectancy)
+
+	out.ClosedTradeCount = total
+	if total > 0 {
+		out.WinRate = float64(wins) / float64(total)
+	}
+	out.AvgWin = avgWin
+	out.AvgLoss = avgLoss
+	if sumLossAbs > 0 {
+		out.ProfitFactor = sumWin / sumLossAbs
+	}
+	out.ExpectancyPerTrade = expectancy
+	out.ExpectancyAfterFees = expectancy
+	out.MaxDrawdown = s.maxDrawdown(ctx)
+	if grossProfit > 0 {
+		out.FeesPctOfGrossProfit = totalFees / grossProfit * 100
+	}
+
+	_ = db.QueryRow(ctx, `
+		SELECT symbol FROM trades WHERE exit_time IS NOT NULL
+		GROUP BY symbol ORDER BY SUM(net_pnl) DESC LIMIT 1
+	`).Scan(&out.BestSymbol)
+	_ = db.QueryRow(ctx, `
+		SELECT symbol FROM trades WHERE exit_time IS NOT NULL
+		GROUP BY symbol ORDER BY SUM(net_pnl) ASC LIMIT 1
+	`).Scan(&out.WorstSymbol)
+	_ = db.QueryRow(ctx, `
+		SELECT session FROM trades WHERE exit_time IS NOT NULL AND session IS NOT NULL
+		GROUP BY session ORDER BY SUM(net_pnl) DESC LIMIT 1
+	`).Scan(&out.BestSession)
+	_ = db.QueryRow(ctx, `
+		SELECT session FROM trades WHERE exit_time IS NOT NULL AND session IS NOT NULL
+		GROUP BY session ORDER BY SUM(net_pnl) ASC LIMIT 1
+	`).Scan(&out.WorstSession)
+	_ = db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(net_pnl), 0) FROM trades
+		WHERE exit_time IS NOT NULL AND side = 'LONG'
+	`).Scan(&out.LongPnL)
+	_ = db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(net_pnl), 0) FROM trades
+		WHERE exit_time IS NOT NULL AND side = 'SHORT'
+	`).Scan(&out.ShortPnL)
+
+	var postOnly, allOrders int
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE order_type ILIKE '%limit%'`).Scan(&allOrders)
+	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM orders WHERE status = 'FILLED' AND order_type ILIKE '%limit%'`).Scan(&postOnly)
+	if allOrders > 0 {
+		out.PostOnlyFillRate = float64(postOnly) / float64(allOrders)
+	}
+	if math.IsNaN(out.ProfitFactor) {
+		out.ProfitFactor = 0
+	}
+	return out, nil
 }
 
 type ConfigResponse struct {

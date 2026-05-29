@@ -287,7 +287,9 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 	rt.mu.Lock()
 	rt.openPos = &guardian.InternalPosition{
 		ID: 1, Symbol: symbol, Side: res.SideHint,
-		Quantity: result.FilledQty, StopPrice: stop, HasStop: sl > 0,
+		Quantity: result.FilledQty, EntryPrice: result.FilledPx,
+		StopPrice: stop, TakeProfitPrice: tp, HasStop: sl > 0,
+		EntryTime: time.Now().UnixMilli(),
 	}
 	rt.mu.Unlock()
 	_ = rt.Telegram.Send(ctx, "ENTRY_FILLED", symbol)

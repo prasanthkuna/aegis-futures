@@ -34,17 +34,14 @@ Staging API: `https://staging-aegis-futures-utk2.encr.app`
 
 Test: `GET /status`
 
-## Vercel (dashboard only)
+## Vercel (dashboard)
+
+Production UI: https://aegis-futures-dashboard.vercel.app
+
+API target is baked in via `dashboard/next.config.ts` (staging Encore URL).
 
 ```powershell
 cd dashboard
 pnpm install
-```
-
-In Vercel project env:
-
-- `NEXT_PUBLIC_API_BASE_URL` = `https://staging-aegis-futures-utk2.encr.app`
-
-```powershell
-vercel --cwd dashboard --prod
+vercel deploy --prod --yes
 ```

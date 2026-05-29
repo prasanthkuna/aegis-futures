@@ -24,6 +24,8 @@ type Result struct {
 	ContextComponent   float64
 	DepthComponent     float64
 	SessionComponent   float64
+	TakerFlow          string
+	CVDState           string
 	Decision           string
 	Reason             string
 	SideHint           model.Side
@@ -41,6 +43,8 @@ func Evaluate(in Input) Result {
 
 	r.VolumeComponent = volComp
 	r.CVDComponent = cvdComp
+	r.TakerFlow = flow
+	r.CVDState = cvdState
 	r.StructureComponent = structComp
 	r.ContextComponent = ctxComp
 	r.DepthComponent = depthComp

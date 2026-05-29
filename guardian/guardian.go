@@ -26,12 +26,15 @@ func New(client *binanceex.Client, exec *execution.Service) *Service {
 }
 
 type InternalPosition struct {
-	ID        int64
-	Symbol    string
-	Side      model.Side
-	Quantity  float64
-	StopPrice float64
-	HasStop   bool
+	ID              int64
+	Symbol          string
+	Side            model.Side
+	Quantity        float64
+	EntryPrice      float64
+	StopPrice       float64
+	TakeProfitPrice float64
+	EntryTime       int64 // unix ms
+	HasStop         bool
 }
 
 func (g *Service) Verify(ctx context.Context, pos *InternalPosition) CheckResult {

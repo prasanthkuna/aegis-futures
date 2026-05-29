@@ -1,11 +1,13 @@
 :root {
   --bg: #0b0f14;
   --panel: #121a24;
+  --panel2: #0f151d;
   --text: #e8eef6;
   --muted: #8aa0b5;
   --accent: #3dd68c;
   --danger: #f07178;
   --warn: #ffcb6b;
+  --watch: #82aaff;
 }
 
 * {
@@ -20,7 +22,7 @@ body {
 }
 
 main {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 24px;
 }
@@ -29,7 +31,9 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 h1 {
@@ -37,28 +41,69 @@ h1 {
   font-size: 1.5rem;
 }
 
+h2 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 28px 0 10px;
+}
+
+h3 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+}
+
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
 }
 
 .card {
   background: var(--panel);
   border-radius: 10px;
-  padding: 14px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+}
+
+.card.highlight {
+  border-color: #2a3d52;
 }
 
 .card label {
   display: block;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .card strong {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
+}
+
+.card .hint {
+  display: block;
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.card.pos strong {
+  color: var(--accent);
+}
+
+.card.neg strong {
+  color: var(--danger);
 }
 
 .actions {
@@ -72,6 +117,11 @@ button {
   padding: 10px 14px;
   cursor: pointer;
   font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 button.start {
@@ -89,31 +139,151 @@ button.kill {
   color: #1a0506;
 }
 
+.banner {
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
+.banner.error {
+  background: #2a1518;
+  color: var(--danger);
+  border: 1px solid #4a2028;
+}
+
+.banner.warn {
+  background: #1f1a0d;
+  color: var(--warn);
+  border: 1px solid #3d3418;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--panel);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
-  background: var(--panel);
-  border-radius: 10px;
-  overflow: hidden;
+  min-width: 600px;
 }
 
 th,
 td {
-  padding: 10px 12px;
+  padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid #1e2a38;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 th {
   color: var(--muted);
   font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
 }
 
-.trade {
+td.reason {
+  white-space: normal;
+  max-width: 220px;
+}
+
+td.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 20px;
+}
+
+.decision.trade {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.decision.watch {
+  color: var(--watch);
+}
+
+.decision.skip {
+  color: var(--muted);
+}
+
+td.pos {
   color: var(--accent);
 }
 
-.skip {
+td.neg {
+  color: var(--danger);
+}
+
+.sev.critical,
+.sev.high {
+  color: var(--danger);
+}
+
+.sev.warning {
+  color: var(--warn);
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.config-panel {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.config-panel dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 0 0 16px;
+}
+
+.config-panel dt {
   color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.config-panel dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.config-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid #1e2a38;
+  padding-top: 14px;
+}
+
+.config-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.config-edit input {
+  background: var(--panel2);
+  border: 1px solid #2a3d52;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 0.9rem;
 }
