@@ -336,7 +336,7 @@ func (s *Service) RiskEvents(ctx context.Context) (*RiskEventsResponse, error) {
 	return &RiskEventsResponse{Events: events}, nil
 }
 
-type StrategyTruth struct {
+type StrategyTruthResponse struct {
 	WinRate              float64 `json:"winRate"`
 	AvgWin               float64 `json:"avgWin"`
 	AvgLoss              float64 `json:"avgLoss"`
@@ -359,8 +359,8 @@ type StrategyTruth struct {
 }
 
 //encore:api public method=GET path=/dashboard/strategy-truth
-func (s *Service) StrategyTruth(ctx context.Context) (*StrategyTruth, error) {
-	out := &StrategyTruth{}
+func (s *Service) GetStrategyTruth(ctx context.Context) (*StrategyTruthResponse, error) {
+	out := &StrategyTruthResponse{}
 	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM missed_trades`).Scan(&out.MissedTradeCount)
 	_ = db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM risk_events
