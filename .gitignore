@@ -6,6 +6,8 @@ dashboard/.vercel/
 dashboard/node_modules/
 .env
 .env.local
+aegis/secrets.local.cue
+aegis/.secrets.local.cue
 *.exe
 encore.gen.cue
 /encore.gen

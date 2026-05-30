@@ -26,6 +26,42 @@ type StatusResponse struct {
 	Env            string `json:"env"`
 }
 
+type AccountHealthResponse struct {
+	OK                 bool    `json:"ok"`
+	TotalWalletBalance float64 `json:"totalWalletBalance"`
+	AvailableBalance   float64 `json:"availableBalance"`
+	Testnet            bool    `json:"testnet"`
+	TradingEnabled     bool    `json:"tradingEnabled"`
+	HasAPIKeys         bool    `json:"hasApiKeys"`
+	Error              string  `json:"error,omitempty"`
+}
+
+//encore:api public method=GET path=/account/health
+func (s *Service) AccountHealth(ctx context.Context) (*AccountHealthResponse, error) {
+	out := &AccountHealthResponse{
+		Testnet:        useTestnet(),
+		TradingEnabled: tradingEnabled(),
+		HasAPIKeys:     hasBinanceKeys(),
+	}
+	if !out.HasAPIKeys {
+		out.Error = "missing keys: set BinanceAPIKey and BinanceAPISecret in Encore Cloud secrets"
+		return out, nil
+	}
+	if s.rt.Binance == nil {
+		out.Error = "binance client not initialized"
+		return out, nil
+	}
+	acct, err := s.rt.Binance.Account(ctx)
+	if err != nil {
+		out.Error = err.Error()
+		return out, nil
+	}
+	out.OK = true
+	out.TotalWalletBalance = binanceex.ParseFloat(acct.TotalWalletBalance)
+	out.AvailableBalance = binanceex.ParseFloat(acct.AvailableBalance)
+	return out, nil
+}
+
 //encore:api public method=GET path=/status
 func (s *Service) Status(ctx context.Context) (*StatusResponse, error) {
 	snap := s.rt.Risk.Get()
@@ -34,7 +70,7 @@ func (s *Service) Status(ctx context.Context) (*StatusResponse, error) {
 		Status: "ok", State: string(s.rt.State()),
 		TradingEnabled: tradingEnabled(), Paused: snap.Paused, Armed: armed,
 		UniverseSize: len(s.rt.Universe.ActiveSymbols()),
-		Testnet: useTestnet(), Env: secrets.AegisEnv,
+		Testnet: useTestnet(), Env: aegisEnv(),
 	}, nil
 }
 
@@ -127,14 +163,30 @@ func (s *Service) maxDrawdown(ctx context.Context) float64 {
 }
 
 type RadarResponse struct {
-	Items []model.SymbolSnapshot `json:"items"`
+	Items  []model.SymbolSnapshot `json:"items"`
+	Meta   model.RadarMeta        `json:"meta"`
+	Regime model.RadarRegime      `json:"regime"`
 }
 
 //encore:api public method=GET path=/radar
 func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 	live := config.Live.Get()
-	var items []model.SymbolSnapshot
+	minScore := live.MinTradeScore
+	if minScore <= 0 {
+		minScore = config.MinTradeScore
+	}
+	watchMin := minScore * 0.85
+	aplus := config.APlusTradeScore
 	btc := s.rt.Hub.BTC5mChangePct()
+	riskSnap := s.rt.Risk.Get()
+	armed := tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
+	openN := riskSnap.OpenPositions
+	if openN == 0 && s.rt.OpenPosition() != nil {
+		openN = 1
+	}
+	canTrade := armed && openN < live.MaxOpenPositions && riskSnap.TradesToday < live.MaxTradesPerDay
+
+	var items []model.SymbolSnapshot
 	for _, sym := range s.rt.Universe.ActiveSymbols() {
 		st, ok := s.rt.Hub.Snapshot(sym)
 		if !ok {
@@ -144,7 +196,14 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 		res := strategy.Evaluate(strategy.Input{
 			Symbol: sym, State: st, CoinGlassScore: cg, BTCChange5mPct: btc,
 		})
-		dec := radarDecision(res, live.MinTradeScore)
+		dec := radarDecision(res, minScore)
+		gap := minScore - res.TradeScore
+		if gap < 0 {
+			gap = 0
+		}
+		pos := s.rt.OpenPosition()
+		inPos := pos != nil && pos.Symbol == sym
+		willFire := canTrade && dec == "trade" && !inPos
 		items = append(items, model.SymbolSnapshot{
 			Symbol: sym, Price: st.LastPrice, QuoteVolume24h: st.QuoteVolume24h,
 			SpreadBps: st.SpreadBps, VolumeSurge: res.VolumeComponent,
@@ -152,18 +211,58 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 			OIFundingContext: oiFundingContext(cg), CoinGlassScore: cg,
 			SessionScore: res.SessionComponent, TradeScore: res.TradeScore,
 			Decision: dec, Reason: res.Reason, UpdatedAt: time.Now().UTC(),
+			GapToTrade: gap, WeakestLink: strategy.WeakestLink(res, res.Reason),
+			Tier: strategy.TierLabel(res.TradeScore, minScore, aplus, dec),
+			SideHint: strategy.SideHintString(res.SideHint),
+			Components: strategy.ComponentsFrom(res),
+			Gates:      strategy.GateFlagsFor(res, minScore, btc, st.SpreadBps),
+			BtcRegime:  strategy.BtcRegimeTag(btc),
+			IsCore:     isCoreSymbol(sym),
+			WillFire:   willFire,
+			HasOpenSlot: openN < live.MaxOpenPositions && !inPos,
 		})
 	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].TradeScore > items[j].TradeScore
-	})
+	s.radar.applyDeltas(items)
+	sortRadarActionability(items)
 	for i := range items {
 		items[i].Rank = i + 1
 	}
 	if items == nil {
 		items = []model.SymbolSnapshot{}
 	}
-	return &RadarResponse{Items: items}, nil
+	regime := strategy.BuildRegime(items, btc)
+	meta := model.RadarMeta{
+		MinTradeScore: minScore, WatchMinScore: watchMin, APlusTradeScore: aplus,
+		Armed: armed, TradingEnabled: tradingEnabled(), Paused: riskSnap.Paused,
+		KillSwitch: riskSnap.KillSwitch, TradesToday: riskSnap.TradesToday,
+		MaxTradesPerDay: live.MaxTradesPerDay, OpenPositions: openN,
+		MaxOpenPositions: live.MaxOpenPositions, TodayPnL: riskSnap.DailyPnL,
+		DailyHardStopUsd: live.DailyHardStopUSD,
+	}
+	return &RadarResponse{Items: items, Meta: meta, Regime: regime}, nil
+}
+
+func isCoreSymbol(sym string) bool {
+	for _, c := range config.AlwaysInclude {
+		if c == sym {
+			return true
+		}
+	}
+	return false
+}
+
+func sortRadarActionability(items []model.SymbolSnapshot) {
+	priority := map[string]int{"trade": 0, "watch": 1, "skip": 2}
+	sort.Slice(items, func(i, j int) bool {
+		pi, pj := priority[items[i].Decision], priority[items[j].Decision]
+		if pi != pj {
+			return pi < pj
+		}
+		if items[i].GapToTrade != items[j].GapToTrade {
+			return items[i].GapToTrade < items[j].GapToTrade
+		}
+		return items[i].TradeScore > items[j].TradeScore
+	})
 }
 
 func radarDecision(res strategy.Result, minScore float64) string {

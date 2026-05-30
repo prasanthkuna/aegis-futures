@@ -1,47 +1,50 @@
-# Deploy checklist
+# Production deploy
 
-## Encore Cloud secrets (required before deploy succeeds)
+## Encore Cloud (API + bot)
 
-Open: https://app.encore.cloud/aegis-futures-utk2 → **Settings** → **Secrets**
+App: https://app.encore.cloud/aegis-futures-utk2
 
-Add these **5** secrets for **staging** and **production** (same values):
+**Secrets** (staging + production):
 
-| Secret name | Example value | Notes |
-|-------------|---------------|--------|
-| `BinanceAPIKey` | your key | Futures API key |
-| `BinanceAPISecret` | your secret | Futures API secret |
-| `BinanceUseTestnet` | `false` | mainnet |
-| `AegisTradingEnabled` | `false` | keep false until dry-run done |
-| `AegisEnv` | `production` | |
+| Secret | Value |
+|--------|--------|
+| `BinanceAPIKey` | Futures API key (unrestricted or whitelisted for Encore egress) |
+| `BinanceAPISecret` | API secret |
+| `BinanceUseTestnet` | `false` |
+| `AegisTradingEnabled` | `false` until ready for live orders |
+| `AegisEnv` | `production` |
 
-Do **not** add CoinGlass or Telegram — they were removed from the app definition.
-
-CLI (if Encore API is reachable from your machine):
+Deploy:
 
 ```powershell
 cd c:\Users\PrashanthKuna\binance
-echo YOUR_KEY | encore secret set --type prod,dev BinanceAPIKey
-echo YOUR_SECRET | encore secret set --type prod,dev BinanceAPISecret
-echo false | encore secret set --type prod,dev BinanceUseTestnet
-echo false | encore secret set --type prod,dev AegisTradingEnabled
-echo production | encore secret set --type prod,dev AegisEnv
 git push encore main
 ```
 
-## After secrets + deploy
-
 Staging API: `https://staging-aegis-futures-utk2.encr.app`
 
-Test: `GET /status`
+Health checks:
+
+- `GET /status`
+- `GET /dashboard/summary` — account balance
+- `GET /radar` — setup radar (regime banner, components, deltas)
 
 ## Vercel (dashboard)
 
 Production UI: https://aegis-futures-dashboard.vercel.app
 
-API target is baked in via `dashboard/next.config.ts` (staging Encore URL).
+API base URL is set in `dashboard/next.config.ts` (staging Encore).
 
 ```powershell
 cd dashboard
 pnpm install
+pnpm build
 vercel deploy --prod --yes
 ```
+
+## After deploy — test from UI
+
+1. Open the dashboard; confirm balance ~$460 in command center.
+2. **Setup radar**: regime banner (CHOP / WATCH / MOMENTUM), gap-to-trade, component bars, gates, score Δ on refresh.
+3. Sort **Closest to trade** / filter **Trade + watch**.
+4. **Start** only after `AegisTradingEnabled=true` in Encore secrets.

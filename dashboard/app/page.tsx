@@ -11,18 +11,48 @@ import {
   fmtUsd,
   pnlClass,
 } from "@/lib/format";
+import { RadarPanel } from "@/components/RadarPanel";
 import type {
   BotConfig,
   ClosedTrade,
   DashboardData,
   OpenPosition,
-  RadarItem,
+  RadarData,
   RiskEvent,
   StrategyTruth,
   Summary,
 } from "@/lib/types";
 
 const POLL_MS = 5000;
+
+const emptyRadar: RadarData = {
+  items: [],
+  meta: {
+    minTradeScore: 0.78,
+    watchMinScore: 0.66,
+    aPlusTradeScore: 0.88,
+    armed: false,
+    tradingEnabled: false,
+    paused: false,
+    killSwitch: false,
+    tradesToday: 0,
+    maxTradesPerDay: 6,
+    openPositions: 0,
+    maxOpenPositions: 1,
+    todayPnl: 0,
+    dailyHardStopUsd: 0,
+  },
+  regime: {
+    label: "—",
+    summary: "",
+    tradeCount: 0,
+    watchCount: 0,
+    skipCount: 0,
+    maxScore: 0,
+    medianSurge: 0,
+    btcChange5mPct: 0,
+  },
+};
 
 const emptyTruth: StrategyTruth = {
   winRate: 0,
@@ -70,7 +100,7 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
     status,
   ] = await Promise.all([
     get("/dashboard/summary", null as unknown as Summary),
-    get("/radar", { items: [] as RadarItem[] }),
+    get("/radar", emptyRadar),
     get("/positions/open", { positions: [] as OpenPosition[] }),
     get("/trades/closed", { trades: [] as ClosedTrade[] }),
     get("/dashboard/strategy-truth", emptyTruth),
@@ -94,7 +124,11 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
   return {
     data: {
       summary,
-      radar: radarRes.items ?? [],
+      radar: {
+        items: radarRes.items ?? [],
+        meta: radarRes.meta ?? emptyRadar.meta,
+        regime: radarRes.regime ?? emptyRadar.regime,
+      },
       positions: posRes.positions ?? [],
       trades: tradesRes.trades ?? [],
       truth,
@@ -327,58 +361,7 @@ export default function Home() {
         </section>
       )}
 
-      <section>
-        <h2>Setup radar</h2>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Symbol</th>
-                <th>24h vol</th>
-                <th>Price</th>
-                <th>Spread</th>
-                <th>Vol surge</th>
-                <th>CVD</th>
-                <th>Taker</th>
-                <th>OI/funding</th>
-                <th>CG</th>
-                <th>Session</th>
-                <th>Score</th>
-                <th>Decision</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.radar ?? []).map((row) => (
-                <tr key={row.symbol}>
-                  <td>{row.rank}</td>
-                  <td>{row.symbol}</td>
-                  <td>{(row.quoteVolume24h / 1e6).toFixed(1)}M</td>
-                  <td>{fmtNum(row.price, 4)}</td>
-                  <td>{fmtNum(row.spreadBps, 1)} bps</td>
-                  <td>{fmtPct(row.volumeSurge, 0)}</td>
-                  <td>{row.cvdState}</td>
-                  <td>{row.takerFlow}</td>
-                  <td>{row.oiFundingContext}</td>
-                  <td>{fmtNum(row.coinGlassScore, 2)}</td>
-                  <td>{fmtPct(row.sessionScore, 0)}</td>
-                  <td>{fmtScore(row.tradeScore)}</td>
-                  <td className={`decision ${row.decision}`}>{row.decision}</td>
-                  <td className="reason">{row.reason}</td>
-                </tr>
-              ))}
-              {!data?.radar.length && (
-                <tr>
-                  <td colSpan={14} className="empty">
-                    No symbols in universe yet
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {data && <RadarPanel radar={data.radar} />}
 
       <section>
         <h2>Open position</h2>

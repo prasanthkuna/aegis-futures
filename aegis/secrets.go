@@ -1,7 +1,7 @@
 package aegis
 
-// Required Encore Cloud secrets only (optional Telegram/CoinGlass removed from struct).
-// Set via: encore secret set --type prod,dev <Name>
+// Required Encore Cloud secrets. Set via Encore dashboard or:
+// encore secret set --type prod,dev <Name>
 var secrets struct {
 	BinanceAPIKey       string
 	BinanceAPISecret    string
@@ -10,10 +10,24 @@ var secrets struct {
 	AegisEnv            string
 }
 
+func binanceAPIKey() string       { return secrets.BinanceAPIKey }
+func binanceAPISecret() string    { return secrets.BinanceAPISecret }
+func binanceUseTestnetRaw() string { return secrets.BinanceUseTestnet }
+func aegisTradingEnabledRaw() string {
+	return secrets.AegisTradingEnabled
+}
+func aegisEnv() string { return secrets.AegisEnv }
+
+func hasBinanceKeys() bool {
+	return secrets.BinanceAPIKey != "" && secrets.BinanceAPISecret != ""
+}
+
 func tradingEnabled() bool {
-	return secrets.AegisTradingEnabled == "true" || secrets.AegisTradingEnabled == "1"
+	v := aegisTradingEnabledRaw()
+	return v == "true" || v == "1"
 }
 
 func useTestnet() bool {
-	return secrets.BinanceUseTestnet == "true" || secrets.BinanceUseTestnet == "1"
+	v := binanceUseTestnetRaw()
+	return v == "true" || v == "1"
 }

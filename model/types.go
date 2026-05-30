@@ -29,24 +29,6 @@ const (
 	SideShort Side = "SHORT"
 )
 
-type SymbolSnapshot struct {
-	Symbol           string    `json:"symbol"`
-	Rank             int       `json:"rank"`
-	QuoteVolume24h   float64   `json:"quoteVolume24h"`
-	Price            float64   `json:"price"`
-	SpreadBps        float64   `json:"spreadBps"`
-	VolumeSurge      float64   `json:"volumeSurge"`
-	CVDState         string    `json:"cvdState"`
-	TakerFlow        string    `json:"takerFlow"`
-	OIFundingContext string    `json:"oiFundingContext"`
-	CoinGlassScore   float64   `json:"coinGlassScore"`
-	SessionScore     float64   `json:"sessionScore"`
-	TradeScore       float64   `json:"tradeScore"`
-	Decision         string    `json:"decision"`
-	Reason           string    `json:"reason"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-}
-
 type OpenPositionView struct {
 	Symbol         string  `json:"symbol"`
 	Side           Side    `json:"side"`

@@ -22,14 +22,15 @@ type Service struct {
 	hub    *market.Hub
 	ws     *binanceex.WSManager
 	cancel context.CancelFunc
+	radar  radarCache
 }
 
 func initService() (*Service, error) {
 	hub := market.NewHub()
 	net := binanceex.NetworkForTestnet(useTestnet())
 	var bc *binanceex.Client
-	if secrets.BinanceAPIKey != "" && secrets.BinanceAPISecret != "" {
-		bc = binanceex.NewClient(secrets.BinanceAPIKey, secrets.BinanceAPISecret, useTestnet())
+	if hasBinanceKeys() {
+		bc = binanceex.NewClient(binanceAPIKey(), binanceAPISecret(), useTestnet())
 	}
 	uni := universe.NewManager(hub, bc)
 	r := risk.NewEngine()
