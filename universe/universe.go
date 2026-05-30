@@ -53,8 +53,9 @@ func (m *Manager) Refresh(ctx context.Context) ([]Entry, error) {
 		if vol <= 0 {
 			continue
 		}
+		lastPx := binanceex.ParseFloat(t.LastPrice)
 		rows = append(rows, row{symbol: t.Symbol, vol: vol})
-		m.hub.SetQuoteVolume(t.Symbol, vol)
+		m.hub.SetMarketSnapshot(t.Symbol, lastPx, vol)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].vol > rows[j].vol })
 

@@ -119,6 +119,14 @@ export type StrategyTruth = {
 
 export type PnLPoint = { period: string; netPnl: number };
 
+export type BotStatus = {
+  state: string;
+  tradingEnabled: boolean;
+  paused: boolean;
+  armed: boolean;
+  universeSize: number;
+};
+
 export type DashboardData = {
   summary: Summary;
   radar: RadarItem[];
@@ -129,5 +137,5 @@ export type DashboardData = {
   config: BotConfig;
   pnlDaily: PnLPoint[];
   pnlWeekly: PnLPoint[];
-  status: { state: string; tradingEnabled: boolean };
+  status: BotStatus;
 };

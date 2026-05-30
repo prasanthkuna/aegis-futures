@@ -50,10 +50,34 @@ type WSManager struct {
 	callbacks WSCallbacks
 	mu        sync.Mutex
 	conns     []*websocket.Conn
+	cancel    context.CancelFunc
 }
 
 func NewWSManager(net Network, cb WSCallbacks) *WSManager {
 	return &WSManager{net: net, callbacks: cb}
+}
+
+// ReplaceStreams closes existing connections and subscribes to the given symbols.
+func (m *WSManager) ReplaceStreams(parent context.Context, symbols []string) {
+	m.mu.Lock()
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	for _, c := range m.conns {
+		_ = c.Close()
+	}
+	m.conns = nil
+	m.mu.Unlock()
+
+	if len(symbols) == 0 {
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	m.mu.Lock()
+	m.cancel = cancel
+	m.mu.Unlock()
+	m.Start(ctx, symbols)
 }
 
 func (m *WSManager) Start(ctx context.Context, symbols []string) {
@@ -181,6 +205,10 @@ func (m *WSManager) dispatch(msg []byte) {
 func (m *WSManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
 	for _, c := range m.conns {
 		_ = c.Close()
 	}

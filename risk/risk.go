@@ -117,16 +117,17 @@ func (e *Engine) AllowNewEntry(ctx context.Context) (bool, string) {
 	if s.StateMismatch {
 		return false, "state_mismatch"
 	}
-	if s.OpenPositions >= config.MaxOpenPositions {
+	cfg := config.Live.Get()
+	if s.OpenPositions >= cfg.MaxOpenPositions {
 		return false, "max_positions"
 	}
-	if s.TradesToday >= config.MaxTradesPerDay {
+	if s.TradesToday >= cfg.MaxTradesPerDay {
 		return false, "max_trades_per_day"
 	}
-	if s.DailyPnL <= -config.DailyHardStopUSD {
+	if s.DailyPnL <= -cfg.DailyHardStopUSD {
 		return false, "daily_hard_stop"
 	}
-	if s.WeeklyPnL <= -config.WeeklyHardStopUSD {
+	if s.WeeklyPnL <= -cfg.WeeklyHardStopUSD {
 		return false, "weekly_hard_stop"
 	}
 	if s.ConsecutiveLosses >= config.MaxConsecutiveLosses {

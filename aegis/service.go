@@ -20,6 +20,7 @@ import (
 type Service struct {
 	rt     *engine.Runtime
 	hub    *market.Hub
+	ws     *binanceex.WSManager
 	cancel context.CancelFunc
 }
 
@@ -36,8 +37,8 @@ func initService() (*Service, error) {
 	ex := execution.New(bc)
 	g := guardian.New(bc, ex)
 	led := ledger.New(db)
-	tg := alerts.NewTelegram("", "") // optional: wire env later if needed
-	cg := coinglass.NewClient("")    // context from Binance; CoinGlass not required
+	tg := alerts.NewTelegram("", "")
+	cg := coinglass.NewClient("")
 
 	rt := engine.NewRuntime(hub, uni, r, ex, g, led, tg, cg, bc)
 	svc := &Service{rt: rt, hub: hub}
@@ -45,28 +46,41 @@ func initService() (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	svc.cancel = cancel
 
+	if err := loadBotConfig(ctx); err != nil {
+		log.Printf("bot_config load (defaults): %v", err)
+	}
+
 	cb := binanceex.WSCallbacks{
 		OnAggTrade:   hub.OnAggTrade,
 		OnBookTicker: hub.OnBookTicker,
 		OnKline:      hub.OnKline,
 	}
 	ws := binanceex.NewWSManager(net, cb)
-	go func() {
-		syms := append([]string{}, uni.ActiveSymbols()...)
-		ws.Start(ctx, syms)
-	}()
-	go func() {
-		<-ctx.Done()
-		ws.Close()
-	}()
+	svc.ws = ws
+
+	rt.OnUniverseChanged = func(symbols []string) {
+		ws.ReplaceStreams(ctx, symbols)
+	}
+
+	// Initial universe + WS before engine loops.
+	if bc != nil {
+		if _, err := uni.Refresh(ctx); err != nil {
+			log.Printf("initial universe refresh: %v", err)
+		}
+	}
+	ws.ReplaceStreams(ctx, uni.ActiveSymbols())
 
 	rt.Start(ctx)
-	log.Printf("aegis engine started (testnet=%v trading=%v)", useTestnet(), tradingEnabled())
+	log.Printf("aegis engine started (testnet=%v trading=%v symbols=%d)",
+		useTestnet(), tradingEnabled(), len(uni.ActiveSymbols()))
 	return svc, nil
 }
 
 func (s *Service) Shutdown(force context.Context) {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	if s.ws != nil {
+		s.ws.Close()
 	}
 }

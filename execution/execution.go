@@ -39,7 +39,7 @@ func (s *Service) PlacePostOnlyEntry(ctx context.Context, req EntryRequest) (*En
 	if s.Client == nil {
 		return nil, fmt.Errorf("binance client not configured")
 	}
-	_ = s.Client.SetLeverage(ctx, req.Symbol, config.MaxLeverage)
+	_ = s.Client.SetLeverage(ctx, req.Symbol, config.Live.Get().MaxLeverage)
 	side := "BUY"
 	if req.Side == model.SideShort {
 		side = "SELL"

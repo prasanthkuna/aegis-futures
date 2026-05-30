@@ -158,6 +158,20 @@ button.kill {
   border: 1px solid #3d3418;
 }
 
+.banner.ok {
+  background: #0d1f16;
+  color: var(--accent);
+  border: 1px solid #1a3d2a;
+  font-size: 0.85rem;
+}
+
+.banner.info {
+  background: #0f1520;
+  color: var(--muted);
+  border: 1px solid #2a3d52;
+  font-size: 0.85rem;
+}
+
 .table-wrap {
   overflow-x: auto;
   border-radius: 10px;

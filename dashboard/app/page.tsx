@@ -6,6 +6,7 @@ import {
   fmtDuration,
   fmtNum,
   fmtPct,
+  fmtScore,
   fmtTime,
   fmtUsd,
   pnlClass,
@@ -77,7 +78,13 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
     get("/config/current", null as unknown as BotConfig),
     get("/pnl/daily", { points: [] }),
     get("/pnl/weekly", { points: [] }),
-    get("/status", { state: "—", tradingEnabled: false }),
+    get("/status", {
+      state: "—",
+      tradingEnabled: false,
+      paused: false,
+      armed: false,
+      universeSize: 0,
+    }),
   ]);
 
   if (!summary) {
@@ -118,7 +125,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [configDraft, setConfigDraft] = useState({ active: "", risk: "" });
+  const [configDraft, setConfigDraft] = useState({
+    active: "",
+    risk: "",
+    minScore: "",
+    maxTrades: "",
+    dailyStop: "",
+    weeklyStop: "",
+    maxLev: "",
+  });
 
   const refresh = useCallback(async () => {
     try {
@@ -128,6 +143,11 @@ export default function Home() {
       setConfigDraft({
         active: String(d.config.activeCapitalUsd),
         risk: String(d.config.riskPerTradeUsd),
+        minScore: String(d.config.minTradeScore),
+        maxTrades: String(d.config.maxTradesPerDay),
+        dailyStop: String(d.config.dailyHardStopUsd),
+        weeklyStop: String(d.config.weeklyHardStopUsd),
+        maxLev: String(d.config.maxLeverage),
       });
       setError(null);
     } catch (e) {
@@ -156,7 +176,13 @@ export default function Home() {
   async function saveConfig() {
     const active = parseFloat(configDraft.active);
     const risk = parseFloat(configDraft.risk);
-    if (Number.isNaN(active) || Number.isNaN(risk)) return;
+    let minScore = parseFloat(configDraft.minScore);
+    const maxTrades = parseInt(configDraft.maxTrades, 10);
+    const dailyStop = parseFloat(configDraft.dailyStop);
+    const weeklyStop = parseFloat(configDraft.weeklyStop);
+    const maxLev = parseInt(configDraft.maxLev, 10);
+    if (Number.isNaN(active) || Number.isNaN(risk) || Number.isNaN(minScore)) return;
+    if (minScore > 1) minScore = minScore / 100;
     setBusy("config");
     try {
       await api("/config/update", {
@@ -164,6 +190,11 @@ export default function Home() {
         body: JSON.stringify({
           activeCapitalUsd: active,
           riskPerTradeUsd: risk,
+          minTradeScore: minScore,
+          maxTradesPerDay: Number.isNaN(maxTrades) ? undefined : maxTrades,
+          dailyHardStopUsd: Number.isNaN(dailyStop) ? undefined : dailyStop,
+          weeklyHardStopUsd: Number.isNaN(weeklyStop) ? undefined : weeklyStop,
+          maxLeverage: Number.isNaN(maxLev) ? undefined : maxLev,
         }),
       });
       await refresh();
@@ -183,8 +214,12 @@ export default function Home() {
         <div>
           <h1>Aegis Futures</h1>
           <p className="subtitle">
-            {data?.status.state ?? "—"} ·{" "}
-            {data?.summary.testnet ? "testnet" : "mainnet"} · refreshes every{" "}
+            {data?.status.state ?? "—"}
+            {data?.status.paused ? " · paused" : ""}
+            {data?.status.armed ? " · armed (can trade)" : " · not armed"}
+            {" · "}
+            {data?.status.universeSize ?? 0} symbols ·{" "}
+            {data?.summary?.testnet ? "testnet" : "mainnet"} · every{" "}
             {POLL_MS / 1000}s
           </p>
         </div>
@@ -217,6 +252,18 @@ export default function Home() {
       {warnings.length > 0 && !error && (
         <div className="banner warn">
           Some API endpoints unavailable (deploy backend): {warnings.join(", ")}
+        </div>
+      )}
+      {data?.status && !error && (
+        <div
+          className={`banner ${data.status.armed ? "ok" : data.status.paused ? "warn" : "info"}`}
+        >
+          <strong>Start</strong> clears pause and returns to scanning. Live orders
+          require <strong>AegisTradingEnabled=true</strong> in Encore secrets
+          {data.status.tradingEnabled
+            ? " (secret is on)"
+            : " (secret is off — no entries)"}
+          .
         </div>
       )}
 
@@ -316,7 +363,7 @@ export default function Home() {
                   <td>{row.oiFundingContext}</td>
                   <td>{fmtNum(row.coinGlassScore, 2)}</td>
                   <td>{fmtPct(row.sessionScore, 0)}</td>
-                  <td>{fmtNum(row.tradeScore, 2)}</td>
+                  <td>{fmtScore(row.tradeScore)}</td>
                   <td className={`decision ${row.decision}`}>{row.decision}</td>
                   <td className="reason">{row.reason}</td>
                 </tr>
@@ -553,7 +600,7 @@ export default function Home() {
                 <dt>Weekly hard stop</dt>
                 <dd>{fmtUsd(data.config.weeklyHardStopUsd)}</dd>
                 <dt>Min trade score</dt>
-                <dd>{fmtNum(data.config.minTradeScore, 2)}</dd>
+                <dd>{fmtScore(data.config.minTradeScore)}</dd>
               </dl>
               <div className="config-edit">
                 <label>
@@ -571,6 +618,60 @@ export default function Home() {
                     value={configDraft.risk}
                     onChange={(e) =>
                       setConfigDraft((d) => ({ ...d, risk: e.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Min trade score (0.78 or 78)
+                  <input
+                    value={configDraft.minScore}
+                    onChange={(e) =>
+                      setConfigDraft((d) => ({ ...d, minScore: e.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Max trades / day
+                  <input
+                    value={configDraft.maxTrades}
+                    onChange={(e) =>
+                      setConfigDraft((d) => ({
+                        ...d,
+                        maxTrades: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Daily hard stop (USD)
+                  <input
+                    value={configDraft.dailyStop}
+                    onChange={(e) =>
+                      setConfigDraft((d) => ({
+                        ...d,
+                        dailyStop: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Weekly hard stop (USD)
+                  <input
+                    value={configDraft.weeklyStop}
+                    onChange={(e) =>
+                      setConfigDraft((d) => ({
+                        ...d,
+                        weeklyStop: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Max leverage
+                  <input
+                    value={configDraft.maxLev}
+                    onChange={(e) =>
+                      setConfigDraft((d) => ({ ...d, maxLev: e.target.value }))
                     }
                   />
                 </label>

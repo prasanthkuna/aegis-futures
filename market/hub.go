@@ -109,6 +109,22 @@ func (h *Hub) SetQuoteVolume(symbol string, vol float64) {
 	st.mu.Unlock()
 }
 
+// SetMarketSnapshot seeds price/volume from REST (e.g. on universe refresh).
+func (h *Hub) SetMarketSnapshot(symbol string, price, quoteVol float64) {
+	st := h.Ensure(symbol)
+	st.mu.Lock()
+	if quoteVol > 0 {
+		st.QuoteVolume24h = quoteVol
+	}
+	if price > 0 {
+		st.LastPrice = price
+		if st.Bid <= 0 || st.Ask <= 0 {
+			st.Bid, st.Ask = price, price
+		}
+	}
+	st.mu.Unlock()
+}
+
 func (h *Hub) Snapshot(symbol string) (SymbolState, bool) {
 	h.mu.RLock()
 	st, ok := h.symbols[symbol]

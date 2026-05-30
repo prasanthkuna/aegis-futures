@@ -4,6 +4,12 @@ export function fmtUsd(n: number | undefined | null, digits = 2): string {
   return `${sign}$${Math.abs(n).toFixed(digits)}`;
 }
 
+/** TradeScore is 0–1; show as decimal and percent for clarity. */
+export function fmtScore(n: number | undefined | null): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  return `${n.toFixed(2)} (${(n * 100).toFixed(0)}%)`;
+}
+
 export function fmtPct(n: number | undefined | null, digits = 1): string {
   if (n == null || Number.isNaN(n)) return "—";
   return `${(n * 100).toFixed(digits)}%`;

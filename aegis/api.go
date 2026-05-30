@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -18,26 +19,33 @@ type StatusResponse struct {
 	Status         string `json:"status"`
 	State          string `json:"state"`
 	TradingEnabled bool   `json:"tradingEnabled"`
+	Paused         bool   `json:"paused"`
+	Armed          bool   `json:"armed"`
+	UniverseSize   int    `json:"universeSize"`
 	Testnet        bool   `json:"testnet"`
 	Env            string `json:"env"`
 }
 
 //encore:api public method=GET path=/status
 func (s *Service) Status(ctx context.Context) (*StatusResponse, error) {
+	snap := s.rt.Risk.Get()
+	armed := tradingEnabled() && !snap.Paused && !snap.KillSwitch
 	return &StatusResponse{
 		Status: "ok", State: string(s.rt.State()),
-		TradingEnabled: tradingEnabled(), Testnet: useTestnet(),
-		Env: secrets.AegisEnv,
+		TradingEnabled: tradingEnabled(), Paused: snap.Paused, Armed: armed,
+		UniverseSize: len(s.rt.Universe.ActiveSymbols()),
+		Testnet: useTestnet(), Env: secrets.AegisEnv,
 	}, nil
 }
 
 //encore:api public method=GET path=/dashboard/summary
 func (s *Service) DashboardSummary(ctx context.Context) (*model.DashboardSummary, error) {
 	today, week, fees, _ := s.rt.Ledger.RealizedPnLSummary(ctx)
+	live := config.Live.Get()
 	sum := &model.DashboardSummary{
 		Mode:             "live",
 		BotStatus:        string(s.rt.State()),
-		ActiveCapitalUsd: config.ActiveCapitalUSD,
+		ActiveCapitalUsd: live.ActiveCapitalUSD,
 		RealizedPnL:      week,
 		NetPnLAfterFees:  week - fees,
 		TodayPnL:         today,
@@ -124,6 +132,7 @@ type RadarResponse struct {
 
 //encore:api public method=GET path=/radar
 func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
+	live := config.Live.Get()
 	var items []model.SymbolSnapshot
 	btc := s.rt.Hub.BTC5mChangePct()
 	for _, sym := range s.rt.Universe.ActiveSymbols() {
@@ -135,7 +144,7 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 		res := strategy.Evaluate(strategy.Input{
 			Symbol: sym, State: st, CoinGlassScore: cg, BTCChange5mPct: btc,
 		})
-		dec := radarDecision(res)
+		dec := radarDecision(res, live.MinTradeScore)
 		items = append(items, model.SymbolSnapshot{
 			Symbol: sym, Price: st.LastPrice, QuoteVolume24h: st.QuoteVolume24h,
 			SpreadBps: st.SpreadBps, VolumeSurge: res.VolumeComponent,
@@ -157,11 +166,11 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 	return &RadarResponse{Items: items}, nil
 }
 
-func radarDecision(res strategy.Result) string {
+func radarDecision(res strategy.Result, minScore float64) string {
 	if res.Decision == "trade" {
 		return "trade"
 	}
-	if res.TradeScore >= config.MinTradeScore*0.85 {
+	if res.TradeScore >= minScore*0.85 {
 		return "watch"
 	}
 	return "skip"
@@ -187,11 +196,12 @@ func (s *Service) OpenPositions(ctx context.Context) (*OpenPositionsResponse, er
 	if pos == nil {
 		return &OpenPositionsResponse{Positions: []model.OpenPositionView{}}, nil
 	}
+	live := config.Live.Get()
 	st, _ := s.rt.Hub.Snapshot(pos.Symbol)
 	upnl := unrealizedPnL(pos.Side, pos.EntryPrice, st.LastPrice, pos.Quantity)
 	rMult := 0.0
-	if config.RiskPerTradeUSD > 0 {
-		rMult = upnl / config.RiskPerTradeUSD
+	if live.RiskPerTradeUSD > 0 {
+		rMult = upnl / live.RiskPerTradeUSD
 	}
 	secs := int64(0)
 	if pos.EntryTime > 0 {
@@ -203,7 +213,7 @@ func (s *Service) OpenPositions(ctx context.Context) (*OpenPositionsResponse, er
 	}
 	return &OpenPositionsResponse{Positions: []model.OpenPositionView{{
 		Symbol: pos.Symbol, Side: pos.Side, EntryPrice: pos.EntryPrice,
-		CurrentPrice: st.LastPrice, Quantity: pos.Quantity, Leverage: config.MaxLeverage,
+		CurrentPrice: st.LastPrice, Quantity: pos.Quantity, Leverage: live.MaxLeverage,
 		StopPrice: pos.StopPrice, TakeProfitPrice: pos.TakeProfitPrice,
 		UnrealizedPnL: upnl, RMultiple: rMult, TimeInTradeSec: secs, GuardianStatus: guard,
 	}}}, nil
@@ -466,8 +476,13 @@ func (s *Service) CurrentConfig(ctx context.Context) (*ConfigResponse, error) {
 }
 
 type UpdateConfigRequest struct {
-	ActiveCapitalUsd *float64 `json:"activeCapitalUsd,omitempty"`
-	RiskPerTradeUsd  *float64 `json:"riskPerTradeUsd,omitempty"`
+	ActiveCapitalUsd  *float64 `json:"activeCapitalUsd,omitempty"`
+	RiskPerTradeUsd   *float64 `json:"riskPerTradeUsd,omitempty"`
+	MinTradeScore     *float64 `json:"minTradeScore,omitempty"`
+	MaxTradesPerDay   *int     `json:"maxTradesPerDay,omitempty"`
+	DailyHardStopUsd  *float64 `json:"dailyHardStopUsd,omitempty"`
+	WeeklyHardStopUsd *float64 `json:"weeklyHardStopUsd,omitempty"`
+	MaxLeverage       *int     `json:"maxLeverage,omitempty"`
 }
 
 //encore:api public method=POST path=/config/update
@@ -478,8 +493,28 @@ func (s *Service) UpdateConfig(ctx context.Context, req *UpdateConfigRequest) (*
 	if req.RiskPerTradeUsd != nil {
 		_, _ = db.Exec(ctx, `UPDATE bot_config SET risk_per_trade_usd = $1, updated_at = NOW() WHERE id = 'default'`, *req.RiskPerTradeUsd)
 	}
+	if req.MinTradeScore != nil {
+		v := *req.MinTradeScore
+		if v > 1 {
+			v = v / 100 // allow UI to send 78 meaning 0.78
+		}
+		_, _ = db.Exec(ctx, `UPDATE bot_config SET min_trade_score = $1, updated_at = NOW() WHERE id = 'default'`, v)
+	}
+	if req.MaxTradesPerDay != nil {
+		_, _ = db.Exec(ctx, `UPDATE bot_config SET max_trades_per_day = $1, updated_at = NOW() WHERE id = 'default'`, *req.MaxTradesPerDay)
+	}
+	if req.DailyHardStopUsd != nil {
+		_, _ = db.Exec(ctx, `UPDATE bot_config SET daily_hard_stop_usd = $1, updated_at = NOW() WHERE id = 'default'`, *req.DailyHardStopUsd)
+	}
+	if req.WeeklyHardStopUsd != nil {
+		_, _ = db.Exec(ctx, `UPDATE bot_config SET weekly_hard_stop_usd = $1, updated_at = NOW() WHERE id = 'default'`, *req.WeeklyHardStopUsd)
+	}
+	if req.MaxLeverage != nil {
+		_, _ = db.Exec(ctx, `UPDATE bot_config SET max_leverage = $1, updated_at = NOW() WHERE id = 'default'`, *req.MaxLeverage)
+	}
 	payload, _ := json.Marshal(req)
 	_, _ = db.Exec(ctx, `INSERT INTO config_versions (payload) VALUES ($1)`, payload)
+	_ = loadBotConfig(ctx)
 	return s.CurrentConfig(ctx)
 }
 
@@ -488,6 +523,9 @@ func (s *Service) BotStart(ctx context.Context) (*StatusResponse, error) {
 	s.rt.Risk.Resume()
 	s.rt.Risk.SetTradingEnabled(tradingEnabled())
 	s.rt.SetState(ctx, model.StateScanning, "manual_start")
+	if !tradingEnabled() {
+		log.Printf("bot/start: scanning resumed; set AegisTradingEnabled=true to allow orders")
+	}
 	return s.Status(ctx)
 }
 

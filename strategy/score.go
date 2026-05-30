@@ -53,8 +53,9 @@ func Evaluate(in Input) Result {
 	r.TradeScore = 0.25*volComp + 0.25*cvdComp + 0.20*structComp +
 		0.15*ctxComp + 0.10*depthComp + 0.05*sessComp
 
-	if r.TradeScore < config.MinTradeScore {
-		r.Reason = fmt.Sprintf("score %.2f < %.2f", r.TradeScore, config.MinTradeScore)
+	minScore := config.Live.Get().MinTradeScore
+	if r.TradeScore < minScore {
+		r.Reason = fmt.Sprintf("score %.2f < %.2f", r.TradeScore, minScore)
 		return r
 	}
 

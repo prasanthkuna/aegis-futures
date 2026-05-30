@@ -37,6 +37,9 @@ type Runtime struct {
 	openPos       *guardian.InternalPosition
 	lastWSHealthy time.Time
 	cgScores      map[string]float64
+
+	// OnUniverseChanged is called after universe refresh (e.g. resubscribe WS).
+	OnUniverseChanged func(symbols []string)
 }
 
 func NewRuntime(
@@ -138,6 +141,9 @@ func (rt *Runtime) refreshUniverse(ctx context.Context) {
 	}
 	rt.Risk.SetMarketHealthy(true)
 	rt.lastWSHealthy = time.Now()
+	if rt.OnUniverseChanged != nil {
+		rt.OnUniverseChanged(rt.Universe.ActiveSymbols())
+	}
 }
 
 func (rt *Runtime) coinGlassLoop(ctx context.Context) {
@@ -243,10 +249,11 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 		rt.SetState(ctx, model.StateScanning, "no_price")
 		return
 	}
-	qty := execution.RiskQuantity(config.ActiveCapitalUSD, config.RiskPerTradeUSD, entry,
-		entry*0.005, config.MaxLeverage) // provisional stop distance 0.5% for sizing
-	stop := execution.StopPrice(entry, res.SideHint, config.RiskPerTradeUSD, qty)
-	qty = execution.RiskQuantity(config.ActiveCapitalUSD, config.RiskPerTradeUSD, entry, stop, config.MaxLeverage)
+	cfg := config.Live.Get()
+	qty := execution.RiskQuantity(cfg.ActiveCapitalUSD, cfg.RiskPerTradeUSD, entry,
+		entry*0.005, cfg.MaxLeverage) // provisional stop distance 0.5% for sizing
+	stop := execution.StopPrice(entry, res.SideHint, cfg.RiskPerTradeUSD, qty)
+	qty = execution.RiskQuantity(cfg.ActiveCapitalUSD, cfg.RiskPerTradeUSD, entry, stop, cfg.MaxLeverage)
 	if qty <= 0 {
 		_ = rt.Ledger.InsertMissedTrade(ctx, symbol, string(res.SideHint), res.TradeScore, "invalid_qty")
 		rt.SetState(ctx, model.StateScanning, "invalid_qty")
@@ -281,7 +288,7 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 		rt.SetState(ctx, model.StatePaused, "stop_failed")
 		return
 	}
-	tp := execution.TakeProfitPrice(result.FilledPx, res.SideHint, 2.0, config.RiskPerTradeUSD, result.FilledQty)
+	tp := execution.TakeProfitPrice(result.FilledPx, res.SideHint, 2.0, cfg.RiskPerTradeUSD, result.FilledQty)
 	_, _ = rt.Execution.PlaceTakeProfit(ctx, symbol, res.SideHint, result.FilledQty, tp)
 
 	rt.mu.Lock()
