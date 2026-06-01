@@ -1,4 +1,6 @@
 /.encore
+.psreadline/
+.tmp/
 encore.gen.go
 node_modules/
 .next/

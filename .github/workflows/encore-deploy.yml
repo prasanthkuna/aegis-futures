@@ -1,0 +1,69 @@
+# Deploy the Go backend to Encore Cloud when main changes (excluding dashboard-only commits).
+#
+# Setup (one time):
+#   1. Encore Cloud → aegis-futures-utk2 → Settings → Auth Keys → create a reusable key
+#   2. GitHub → prasanthkuna/aegis-futures → Settings → Secrets → Actions → ENCORE_AUTH_KEY
+#
+# Alternative (no workflow): link GitHub in Encore Cloud and set Branch push = main.
+# Use ONE method only — both will trigger duplicate builds.
+name: Deploy backend to Encore Cloud
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "dashboard/**"
+      - ".vscode/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: encore-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Encore CLI
+        run: curl -L https://encore.dev/install.sh | bash
+
+      - name: Authenticate Encore
+        env:
+          ENCORE_AUTH_KEY: ${{ secrets.ENCORE_AUTH_KEY }}
+        run: |
+          if [ -z "$ENCORE_AUTH_KEY" ]; then
+            echo "::error::Missing ENCORE_AUTH_KEY. Create an auth key at https://app.encore.cloud/aegis-futures-utk2/settings/auth-keys and add it as a GitHub Actions secret."
+            exit 1
+          fi
+          export PATH="$HOME/.encore/bin:$PATH"
+          encore auth login --auth-key="$ENCORE_AUTH_KEY"
+          encore auth whoami
+
+      - name: Push to Encore Cloud
+        env:
+          ENCORE_APP_ID: aegis-futures-utk2
+        run: |
+          export PATH="$HOME/.encore/bin:$PATH"
+          git remote add encore "encore://${ENCORE_APP_ID}" 2>/dev/null || \
+            git remote set-url encore "encore://${ENCORE_APP_ID}"
+          git push encore HEAD:main
+
+      - name: Verify Encore remote
+        run: |
+          export PATH="$HOME/.encore/bin:$PATH"
+          git fetch encore
+          LOCAL="$(git rev-parse HEAD)"
+          REMOTE="$(git rev-parse encore/main)"
+          echo "HEAD=$LOCAL"
+          echo "encore/main=$REMOTE"
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "::error::encore/main does not match pushed commit"
+            exit 1
+          fi
+          echo "Encore build triggered — check https://app.encore.cloud/aegis-futures-utk2"

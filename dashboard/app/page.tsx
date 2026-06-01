@@ -12,6 +12,7 @@ import {
   pnlClass,
 } from "@/lib/format";
 import { RadarPanel } from "@/components/RadarPanel";
+import { normalizeRadarItem } from "@/lib/radar-utils";
 import type {
   BotConfig,
   ClosedTrade,
@@ -121,11 +122,17 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
     throw new Error("Could not load dashboard summary");
   }
 
+  const minScore =
+    radarRes.meta?.minTradeScore ?? config?.minTradeScore ?? 0.78;
+  const radarItems = (radarRes.items ?? []).map((item) =>
+    normalizeRadarItem(item, minScore)
+  );
+
   return {
     data: {
       summary,
       radar: {
-        items: radarRes.items ?? [],
+        items: radarItems,
         meta: radarRes.meta ?? emptyRadar.meta,
         regime: radarRes.regime ?? emptyRadar.regime,
       },

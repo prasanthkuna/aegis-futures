@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   filterRadarItems,
   gateIcon,
+  normalizeRadarItem,
   sortRadarItems,
   weakestLabel,
   type FilterPreset,
@@ -81,7 +82,10 @@ export function RadarPanel({ radar }: Props) {
 
   const meta = radar.meta ?? emptyMeta;
   const regime = radar.regime ?? emptyRegime;
-  const items = radar.items ?? [];
+  const items = useMemo(
+    () => (radar.items ?? []).map((item) => normalizeRadarItem(item, meta.minTradeScore)),
+    [radar.items, meta.minTradeScore]
+  );
 
   const rows = useMemo(() => {
     const filtered = filterRadarItems(items, filter);
@@ -98,7 +102,7 @@ export function RadarPanel({ radar }: Props) {
         </p>
       </div>
 
-      <div className={`regime-banner regime-${regime.label.toLowerCase()}`}>
+      <div className={`regime-banner regime-${(regime.label || "unknown").toLowerCase()}`}>
         <strong>REGIME: {regime.label}</strong>
         <span>{regime.summary}</span>
         <span className="regime-btc">
@@ -183,12 +187,12 @@ export function RadarPanel({ radar }: Props) {
             {rows.map((row) => (
               <tr
                 key={row.symbol}
-                className={`radar-row tier-${row.tier.replace("+", "plus")} ${row.isCore ? "core" : ""}`}
+                className={`radar-row tier-${(row.tier ?? "unknown").replace("+", "plus")} ${row.isCore ? "core" : ""}`}
               >
                 <td>{row.rank}</td>
                 <td>
                   <div className="sym-cell">
-                    <strong>{row.symbol.replace("USDT", "")}</strong>
+                    <strong>{(row.symbol ?? "").replace("USDT", "")}</strong>
                     {row.isCore && <span className="tag-core">core</span>}
                     {row.sideHint && (
                       <span className="tag-side">{row.sideHint}</span>

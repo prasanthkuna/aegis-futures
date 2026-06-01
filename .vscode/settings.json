@@ -1,0 +1,26 @@
+{
+  "terminal.integrated.env.windows": {
+    "TEMP": "${workspaceFolder}\\.tmp",
+    "TMP": "${workspaceFolder}\\.tmp"
+  },
+  "terminal.integrated.defaultProfile.windows": "Command Prompt",
+  "terminal.integrated.profiles.windows": {
+    "Command Prompt": {
+      "path": "C:\\Windows\\System32\\cmd.exe",
+      "icon": "terminal-cmd"
+    },
+    "PowerShell": {
+      "source": "PowerShell",
+      "icon": "terminal-powershell",
+      "args": [
+        "-NoProfile",
+        "-NoExit",
+        "-Command",
+        "Set-PSReadLineOption -HistorySaveStyle SaveNothing"
+      ]
+    }
+  },
+  "powershell.integratedConsole.startInBackground": false,
+  "powershell.startAsLoginShell": false,
+  "powershell.enableProfileLoading": false
+}

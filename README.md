@@ -40,6 +40,10 @@ pnpm dev
 
 Open http://localhost:3000
 
+## Deploy backend (Encore Cloud)
+
+Push to `main` on GitHub auto-deploys the backend via [GitHub Actions](.github/workflows/encore-deploy.yml). One-time setup: add an `ENCORE_AUTH_KEY` secret (see [DEPLOY.md](DEPLOY.md)).
+
 ## Smoke test (once)
 
 1. Set `BinanceUseTestnet=true`, `AegisTradingEnabled=true`
