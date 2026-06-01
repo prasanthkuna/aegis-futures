@@ -1,7 +1,5 @@
 package model
 
-import "time"
-
 type BotState string
 
 const (
