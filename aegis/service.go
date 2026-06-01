@@ -1,5 +1,7 @@
 package aegis
 
+// deploy-smoke: GitHub → Encore auto-deploy test (2026-06-01)
+
 import (
 	"context"
 	"log"
