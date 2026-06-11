@@ -195,7 +195,7 @@ func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 	}
 
 	var items []model.SymbolSnapshot
-	for _, sig := range out.Signals {
+	for _, sig := range out.Universe {
 		items = append(items, proSignalToSnapshot(sig, out.Floor, openN, live.MaxOpenPositions, inPosSym))
 	}
 	s.radar.applyDeltas(items)

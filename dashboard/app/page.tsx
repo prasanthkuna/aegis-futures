@@ -1,12 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { EngineHeartbeat } from "@/components/EngineHeartbeat";
 import { MetricsRail } from "@/components/MetricsRail";
+import { NearMissStrip } from "@/components/NearMissStrip";
 import { OpsDrawer } from "@/components/OpsDrawer";
+import { PlaybookStats } from "@/components/PlaybookStats";
 import { PositionCommander } from "@/components/PositionCommander";
 import { SessionStrip } from "@/components/SessionStrip";
 import { SignalBoard } from "@/components/SignalBoard";
+import { SignalFeed } from "@/components/SignalFeed";
 import { TopBar } from "@/components/TopBar";
+import { UniverseScan } from "@/components/UniverseScan";
 import { api } from "@/lib/api";
 import type {
   BotConfig,
@@ -15,6 +20,7 @@ import type {
   PositionLiveData,
   RiskEvent,
   SessionCockpit,
+  SignalFeedEvent,
   SignalsData,
   StrategyTruth,
   Summary,
@@ -34,7 +40,9 @@ const emptyTruth: StrategyTruth = {
 };
 
 const emptySignals: SignalsData = {
+  universe: [],
   signals: [],
+  nearMiss: [],
   session: {
     session: "—",
     floor: 55,
@@ -60,6 +68,21 @@ const emptySignals: SignalsData = {
     medianSurge: 0,
     btcChange5mPct: 0,
   },
+  heartbeat: {
+    lastScanAt: "",
+    symbolsScanned: 0,
+    candidates: 0,
+    aboveFloor: 0,
+    nearMissCount: 0,
+    willFireCount: 0,
+    maxStrength: 0,
+    medianStrength: 0,
+    flatCvdCount: 0,
+    marketDataHealthy: false,
+    botState: "—",
+    universeSize: 0,
+  },
+  narrative: "",
 };
 
 async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
@@ -78,6 +101,8 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
     signalsRes,
     sessionRes,
     positionLiveRes,
+    feedRes,
+    playbookRes,
     tradesRes,
     truth,
     eventsRes,
@@ -91,6 +116,8 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
       hasPosition: false,
       position: {} as PositionLiveData["position"],
     }),
+    get("/signals/feed", { events: [] as SignalFeedEvent[] }),
+    get("/analytics/playbooks", { stats: [] }),
     get("/trades/closed", { trades: [] as ClosedTrade[] }),
     get("/dashboard/strategy-truth", emptyTruth),
     get("/risk-events", { events: [] as RiskEvent[] }),
@@ -114,6 +141,8 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
       signals: signalsRes ?? null,
       session: sessionRes ?? signalsRes?.session ?? null,
       positionLive: positionLiveRes ?? null,
+      feed: feedRes.events ?? [],
+      playbookStats: playbookRes.stats ?? [],
       trades: tradesRes.trades ?? [],
       truth,
       events: eventsRes.events ?? [],
@@ -144,6 +173,7 @@ export default function Home() {
   const [opsOpen, setOpsOpen] = useState(false);
   const [opsTab, setOpsTab] = useState<"trades" | "risk" | "config">("trades");
   const [loaded, setLoaded] = useState(false);
+  const [execMsg, setExecMsg] = useState<string | null>(null);
   const [configDraft, setConfigDraft] = useState({
     active: "",
     risk: "",
@@ -192,6 +222,26 @@ export default function Home() {
     }
   }
 
+  async function executeSymbol(symbol: string) {
+    if (!confirm(`Execute ${symbol.replace("USDT", "")} via signal engine?\nSame risk pipeline as auto-entry.`)) {
+      return;
+    }
+    setBusy(symbol);
+    setExecMsg(null);
+    try {
+      const res = await api<{ ok: boolean; message: string }>("/execute", {
+        method: "POST",
+        body: JSON.stringify({ symbol }),
+      });
+      setExecMsg(res.ok ? `✓ ${res.message}` : `✗ ${res.message}`);
+      await refresh();
+    } catch (e) {
+      setExecMsg(e instanceof Error ? e.message : "execute failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveConfig() {
     const active = parseFloat(configDraft.active);
     const risk = parseFloat(configDraft.risk);
@@ -221,9 +271,8 @@ export default function Home() {
     }
   }
 
-  const signalWarnings = warnings.filter(
-    (w) => w.startsWith("/signals") || w.startsWith("/position")
-  );
+  const sig = data?.signals;
+  const floor = sig?.floor ?? 55;
 
   return (
     <div className={`terminal ${loaded ? "terminal-loaded" : ""}`}>
@@ -245,27 +294,29 @@ export default function Home() {
         onOps={() => setOpsOpen(true)}
       />
 
-      {error && (
-        <div className="alert alert-error" role="alert">
-          {error}
-        </div>
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
+      {execMsg && (
+        <div className={`alert ${execMsg.startsWith("✓") ? "alert-ok" : "alert-warn"}`}>{execMsg}</div>
       )}
-      {signalWarnings.length > 0 && !error && (
-        <div className="alert alert-warn" role="status">
-          Deploy backend to enable {signalWarnings.join(", ")}.
-        </div>
+      {warnings.length > 0 && !error && (
+        <div className="alert alert-warn">Missing endpoints: {warnings.join(", ")}</div>
       )}
       {data?.status && !data.status.tradingEnabled && !error && (
-        <div className="alert alert-info" role="status">
-          Trading secret off — signals display but entries won&apos;t fire until{" "}
-          <code>AegisTradingEnabled=true</code>
+        <div className="alert alert-info">
+          Trading secret off — enable <code>AegisTradingEnabled=true</code> for Execute / auto entries
         </div>
       )}
 
       <SessionStrip
         session={data?.session ?? null}
-        regime={data?.signals?.regime ?? null}
-        floor={data?.signals?.floor ?? 55}
+        regime={sig?.regime ?? null}
+        floor={floor}
+      />
+
+      <EngineHeartbeat
+        heartbeat={sig?.heartbeat ?? null}
+        narrative={sig?.narrative ?? ""}
+        regime={sig?.regime ?? null}
       />
 
       <div className="hero-grid">
@@ -273,7 +324,26 @@ export default function Home() {
         <MetricsRail summary={data?.summary ?? null} truth={data?.truth ?? null} />
       </div>
 
-      <SignalBoard data={data?.signals ?? null} />
+      <SignalBoard
+        signals={sig?.signals ?? []}
+        floor={floor}
+        busy={busy}
+        onExecute={executeSymbol}
+      />
+
+      <UniverseScan
+        rows={sig?.universe ?? []}
+        floor={floor}
+        busy={busy}
+        onExecute={executeSymbol}
+      />
+
+      <NearMissStrip items={sig?.nearMiss ?? []} floor={floor} />
+
+      <div className="bottom-split">
+        <SignalFeed events={data?.feed ?? []} />
+        <PlaybookStats stats={data?.playbookStats ?? []} />
+      </div>
 
       <OpsDrawer
         open={opsOpen}

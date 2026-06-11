@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -40,6 +41,8 @@ type Runtime struct {
 	cgScores      map[string]float64
 	exitMgr       *exit.Manager
 	lastRank      signal.RankOutput
+	feed          []model.SignalFeedEvent
+	feedMu        sync.RWMutex
 
 	// OnUniverseChanged is called after universe refresh (e.g. resubscribe WS).
 	OnUniverseChanged func(symbols []string)
@@ -201,11 +204,14 @@ func (rt *Runtime) guardianLoop(ctx context.Context) {
 }
 
 func (rt *Runtime) scan(ctx context.Context) {
-	if rt.State() == model.StateKillSwitch || rt.State() == model.StatePaused {
-		return
-	}
 	now := time.Now().UTC()
 	rt.Risk.ResetDailyIfNeeded(now)
+	out := rt.rankSignals(now)
+	rt.mu.Lock()
+	rt.lastRank = out
+	rt.mu.Unlock()
+	rt.recordScan(out)
+
 	rt.mu.RLock()
 	pos := rt.openPos
 	rt.mu.RUnlock()
@@ -213,15 +219,13 @@ func (rt *Runtime) scan(ctx context.Context) {
 		rt.managePosition(ctx, pos)
 		return
 	}
+	if rt.State() == model.StateKillSwitch || rt.State() == model.StatePaused {
+		return
+	}
 	ok, _ := rt.Risk.AllowNewEntry(ctx)
 	if !ok {
 		return
 	}
-	out := rt.rankSignals(now)
-	rt.mu.Lock()
-	rt.lastRank = out
-	rt.mu.Unlock()
-
 	for _, sig := range out.Signals {
 		if !sig.WillFire {
 			continue
@@ -232,6 +236,10 @@ func (rt *Runtime) scan(ctx context.Context) {
 }
 
 func (rt *Runtime) rankSignals(now time.Time) signal.RankOutput {
+	return rt.RankSignalsAt(now)
+}
+
+func (rt *Runtime) RankSignalsAt(now time.Time) signal.RankOutput {
 	btc := rt.Hub.BTC5mChangePct()
 	snap := rt.Risk.Get()
 	live := config.Live.Get()
@@ -241,6 +249,11 @@ func (rt *Runtime) rankSignals(now time.Time) signal.RankOutput {
 	if minTrades <= 0 {
 		minTrades = config.MinTradesPerDay
 	}
+	rt.mu.RLock()
+	inPos := rt.openPos != nil
+	rt.mu.RUnlock()
+	riskOK, _ := rt.Risk.AllowNewEntry(context.Background())
+
 	var inputs []signal.SymbolInput
 	for _, sym := range rt.Universe.ActiveSymbols() {
 		st, ok := rt.Hub.Snapshot(sym)
@@ -257,8 +270,40 @@ func (rt *Runtime) rankSignals(now time.Time) signal.RankOutput {
 	}
 	return signal.Rank(signal.RankInput{
 		Now: now, Symbols: inputs, TradesToday: snap.TradesToday,
-		MinTradesPerDay: minTrades, Armed: armed, CanTrade: canTrade, InPosition: false,
+		MinTradesPerDay: minTrades, Armed: armed, CanTrade: canTrade,
+		InPosition: inPos, TradingEnabled: snap.TradingEnabled,
+		Paused: snap.Paused, KillSwitch: snap.KillSwitch, RiskOK: riskOK,
+		BotState: string(rt.State()), MarketHealthy: snap.MarketDataHealthy,
 	})
+}
+
+func (rt *Runtime) ExecuteSignal(ctx context.Context, symbol string) error {
+	out := rt.RankSignalsAt(time.Now().UTC())
+	var target *model.ProSignal
+	for i := range out.Universe {
+		if out.Universe[i].Symbol == symbol {
+			target = &out.Universe[i]
+			break
+		}
+	}
+	if target == nil {
+		rt.recordExecute(symbol, false, "symbol not in universe")
+		return fmt.Errorf("symbol not in universe")
+	}
+	if !target.CanExecute {
+		rt.recordExecute(symbol, false, target.BlockReason)
+		return fmt.Errorf("blocked: %s", target.BlockReason)
+	}
+	rt.mu.RLock()
+	hasPos := rt.openPos != nil
+	rt.mu.RUnlock()
+	if hasPos {
+		rt.recordExecute(symbol, false, "already in position")
+		return fmt.Errorf("already in position")
+	}
+	rt.tryEnterSignal(ctx, *target)
+	rt.recordExecute(symbol, true, fmt.Sprintf("manual entry %s %s", target.Playbook, target.Side))
+	return nil
 }
 
 func isCoreSymbol(sym string) bool {

@@ -24,9 +24,9 @@ const (
 	BTCBlockLongPct   = -0.40
 	BTCBlockShortPct  = 0.40
 	CVDWindow         = 3 * time.Minute
-	UniverseTopN      = 15
+	UniverseTopN      = 30
 	UniverseRefresh   = 15 * time.Minute
-	MaxNewSymbols     = 12 // 3 always-included + 12 rotating = 15 max
+	MaxNewSymbols     = 27 // 3 core + 27 rotators = 30 max
 	EntryTimeout      = 5 * time.Second
 	MaxEntryAttempts  = 2
 	MaxTradeDuration  = 30 * time.Minute

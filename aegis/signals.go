@@ -2,6 +2,8 @@ package aegis
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"encore.app/config"
@@ -10,38 +12,8 @@ import (
 )
 
 func (s *Service) rankSignals(ctx context.Context) signal.RankOutput {
-	btc := s.rt.Hub.BTC5mChangePct()
-	riskSnap := s.rt.Risk.Get()
-	live := config.Live.Get()
-	armed := tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
-	openN := riskSnap.OpenPositions
-	if openN == 0 && s.rt.OpenPosition() != nil {
-		openN = 1
-	}
-	canTrade := armed && openN < live.MaxOpenPositions && riskSnap.TradesToday < live.MaxTradesPerDay
-	inPos := s.rt.OpenPosition() != nil
-
-	minTrades := live.MinTradesPerDay
-	if minTrades <= 0 {
-		minTrades = config.MinTradesPerDay
-	}
-
-	var inputs []signal.SymbolInput
-	for _, sym := range s.rt.Universe.ActiveSymbols() {
-		st, ok := s.rt.Hub.Snapshot(sym)
-		if !ok {
-			continue
-		}
-		inputs = append(inputs, signal.SymbolInput{
-			Symbol: sym, State: st, CoinGlassScore: s.rt.CoinGlassScore(sym),
-			BTCChange5mPct: btc, IsCore: isCoreSymbol(sym),
-		})
-	}
-	return signal.Rank(signal.RankInput{
-		Now: time.Now().UTC(), Symbols: inputs,
-		TradesToday: riskSnap.TradesToday, MinTradesPerDay: minTrades,
-		Armed: armed, CanTrade: canTrade, InPosition: inPos,
-	})
+	_ = ctx
+	return s.rt.RankSignalsAt(time.Now().UTC())
 }
 
 func proSignalToSnapshot(sig model.ProSignal, floor int, openN, maxOpen int, inPosSym string) model.SymbolSnapshot {
@@ -57,13 +29,9 @@ func proSignalToSnapshot(sig model.ProSignal, floor int, openN, maxOpen int, inP
 	} else if score >= floorF*0.9 {
 		dec = "watch"
 	}
-	tier := "signal"
-	if sig.Strength >= 85 {
-		tier = "A+"
-	} else if sig.Strength >= floor {
-		tier = "A"
-	} else if sig.Strength >= floor-8 {
-		tier = "B"
+	tier := sig.Tier
+	if tier == "" {
+		tier = "signal"
 	}
 	reason := sig.Playbook
 	if sig.Extra.CVDState != "" {
@@ -77,7 +45,7 @@ func proSignalToSnapshot(sig model.ProSignal, floor int, openN, maxOpen int, inP
 		OIFundingContext: oiFundingContext(sig.Extra.FaTilt / 100),
 		CoinGlassScore: sig.Extra.FaTilt / 100, SessionScore: sig.Components.Session,
 		TradeScore: score, Decision: dec, Reason: reason, UpdatedAt: sig.UpdatedAt,
-		GapToTrade: gap, WeakestLink: weakestFromComponents(sig.Components),
+		GapToTrade: gap, WeakestLink: sig.WeakestLink,
 		Tier: tier, SideHint: string(sig.Side),
 		Components: sig.Components,
 		Gates: model.GateFlags{
@@ -111,25 +79,43 @@ func weakestFromComponents(c model.ScoreComponents) string {
 }
 
 type SignalsResponse struct {
-	Signals []model.ProSignal      `json:"signals"`
-	Session model.SessionCockpit   `json:"session"`
-	Floor   int                    `json:"floor"`
-	Regime  model.RadarRegime      `json:"regime"`
+	Universe  []model.ProSignal     `json:"universe"`
+	Signals   []model.ProSignal     `json:"signals"`
+	NearMiss  []model.ProSignal     `json:"nearMiss"`
+	Session   model.SessionCockpit  `json:"session"`
+	Floor     int                   `json:"floor"`
+	Regime    model.RadarRegime     `json:"regime"`
+	Heartbeat model.EngineHeartbeat `json:"heartbeat"`
+	Narrative string                `json:"narrative"`
 }
 
 //encore:api public method=GET path=/signals
 func (s *Service) Signals(ctx context.Context) (*SignalsResponse, error) {
 	out := s.rankSignals(ctx)
-	if out.Signals == nil {
-		out.Signals = []model.ProSignal{}
+	resp := &SignalsResponse{
+		Universe:  out.Universe,
+		Signals:   out.Signals,
+		NearMiss:  out.NearMiss,
+		Session:   out.Session,
+		Floor:     out.Floor,
+		Regime:    out.Regime,
+		Heartbeat: out.Heartbeat,
+		Narrative: out.Narrative,
 	}
-	sess := out.Session
+	if resp.Universe == nil {
+		resp.Universe = []model.ProSignal{}
+	}
+	if resp.Signals == nil {
+		resp.Signals = []model.ProSignal{}
+	}
+	if resp.NearMiss == nil {
+		resp.NearMiss = []model.ProSignal{}
+	}
 	riskSnap := s.rt.Risk.Get()
-	sess.Armed = tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
-	sess.TradingEnabled = tradingEnabled()
-	return &SignalsResponse{
-		Signals: out.Signals, Session: sess, Floor: out.Floor, Regime: out.Regime,
-	}, nil
+	resp.Session.Armed = tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
+	resp.Session.TradingEnabled = tradingEnabled()
+	resp.Session.BtcChange5mPct = out.Regime.BtcChange5mPct
+	return resp, nil
 }
 
 //encore:api public method=GET path=/signals/session
@@ -141,6 +127,76 @@ func (s *Service) SignalsSession(ctx context.Context) (*model.SessionCockpit, er
 	sess.TradingEnabled = tradingEnabled()
 	sess.BtcChange5mPct = out.Regime.BtcChange5mPct
 	return &sess, nil
+}
+
+type FeedResponse struct {
+	Events []model.SignalFeedEvent `json:"events"`
+}
+
+//encore:api public method=GET path=/signals/feed
+func (s *Service) SignalsFeed(ctx context.Context) (*FeedResponse, error) {
+	events := s.rt.FeedEvents()
+	if events == nil {
+		events = []model.SignalFeedEvent{}
+	}
+	return &FeedResponse{Events: events}, nil
+}
+
+type PlaybookStatsResponse struct {
+	Stats []model.PlaybookStat `json:"stats"`
+}
+
+//encore:api public method=GET path=/analytics/playbooks
+func (s *Service) PlaybookStats(ctx context.Context) (*PlaybookStatsResponse, error) {
+	rows, err := db.Query(ctx, `
+		SELECT COALESCE(NULLIF(entry_reason,''), 'UNKNOWN') AS pb,
+		       COUNT(*)::int,
+		       COALESCE(AVG(CASE WHEN net_pnl > 0 THEN 1.0 ELSE 0.0 END), 0),
+		       COALESCE(AVG(r_multiple), 0),
+		       COALESCE(SUM(net_pnl), 0)
+		FROM trades WHERE exit_time IS NOT NULL
+		GROUP BY 1 ORDER BY COUNT(*) DESC
+	`)
+	if err != nil {
+		return &PlaybookStatsResponse{Stats: []model.PlaybookStat{}}, nil
+	}
+	defer rows.Close()
+	var stats []model.PlaybookStat
+	for rows.Next() {
+		var st model.PlaybookStat
+		if err := rows.Scan(&st.Playbook, &st.Trades, &st.WinRate, &st.AvgR, &st.NetPnL); err != nil {
+			continue
+		}
+		stats = append(stats, st)
+	}
+	if stats == nil {
+		stats = []model.PlaybookStat{}
+	}
+	return &PlaybookStatsResponse{Stats: stats}, nil
+}
+
+type ExecuteRequest struct {
+	Symbol string `json:"symbol"`
+}
+
+type ExecuteResponse struct {
+	OK      bool   `json:"ok"`
+	Symbol  string `json:"symbol"`
+	Message string `json:"message"`
+}
+
+//encore:api public method=POST path=/execute
+func (s *Service) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteResponse, error) {
+	if req == nil || req.Symbol == "" {
+		return nil, errors.New("symbol required")
+	}
+	if err := s.rt.ExecuteSignal(ctx, req.Symbol); err != nil {
+		return &ExecuteResponse{OK: false, Symbol: req.Symbol, Message: err.Error()}, nil
+	}
+	return &ExecuteResponse{
+		OK: true, Symbol: req.Symbol,
+		Message: fmt.Sprintf("entry placed for %s", req.Symbol),
+	}, nil
 }
 
 type PositionLiveResponse struct {

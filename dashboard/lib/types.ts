@@ -39,6 +39,124 @@ export type RadarRegime = {
   btcChange5mPct: number;
 };
 
+export type ProSignal = {
+  rank: number;
+  symbol: string;
+  side: string;
+  strength: number;
+  playbook: string;
+  session: string;
+  price: number;
+  spreadBps: number;
+  quoteVolume24h: number;
+  isCore: boolean;
+  willFire: boolean;
+  canExecute: boolean;
+  blockReason?: string;
+  tier: string;
+  gapToFloor: number;
+  playbookTriggered: boolean;
+  weakestLink: string;
+  components: ScoreComponents;
+  extra: {
+    vwapDevPct: number;
+    atr: number;
+    ema9: number;
+    faTilt: number;
+    btcRegime: string;
+    takerFlow: string;
+    cvdState: string;
+  };
+};
+
+export type EngineHeartbeat = {
+  lastScanAt: string;
+  symbolsScanned: number;
+  candidates: number;
+  aboveFloor: number;
+  nearMissCount: number;
+  willFireCount: number;
+  maxStrength: number;
+  medianStrength: number;
+  flatCvdCount: number;
+  marketDataHealthy: boolean;
+  botState: string;
+  universeSize: number;
+};
+
+export type SignalFeedEvent = {
+  at: string;
+  kind: string;
+  symbol?: string;
+  strength?: number;
+  playbook?: string;
+  message: string;
+};
+
+export type PlaybookStat = {
+  playbook: string;
+  trades: number;
+  winRate: number;
+  avgR: number;
+  netPnl: number;
+  bestSession?: string;
+};
+
+export type SessionCockpit = {
+  session: string;
+  floor: number;
+  tradesToday: number;
+  minTradesPerDay: number;
+  maxTradesPerDay: number;
+  targetTradesPerDay: number;
+  activePlaybooks: string[];
+  btcChange5mPct: number;
+  armed: boolean;
+  tradingEnabled: boolean;
+  regimeLabel: string;
+  signalCount: number;
+  nextFloorDrop?: string;
+};
+
+export type SignalsData = {
+  universe: ProSignal[];
+  signals: ProSignal[];
+  nearMiss: ProSignal[];
+  session: SessionCockpit;
+  floor: number;
+  regime: RadarRegime;
+  heartbeat: EngineHeartbeat;
+  narrative: string;
+};
+
+export type PositionLive = {
+  symbol: string;
+  side: string;
+  entryPrice: number;
+  markPrice: number;
+  quantity: number;
+  remainingQty: number;
+  leverage: number;
+  stopPrice: number;
+  trailPrice?: number;
+  takeProfitPrice: number;
+  unrealizedPnl: number;
+  rMultiple: number;
+  holdSec: number;
+  playbook: string;
+  strengthAtEntry: number;
+  exitPhase: string;
+  peakR: number;
+  rulesArmed: string[];
+  partialPctDone: number;
+  guardianStatus: string;
+};
+
+export type PositionLiveData = {
+  hasPosition: boolean;
+  position: PositionLive;
+};
+
 export type ClosedTrade = {
   id: number;
   symbol: string;
@@ -99,86 +217,13 @@ export type BotStatus = {
   universeSize: number;
 };
 
-export type ProSignal = {
-  rank: number;
-  symbol: string;
-  side: string;
-  strength: number;
-  playbook: string;
-  session: string;
-  price: number;
-  spreadBps: number;
-  quoteVolume24h: number;
-  isCore: boolean;
-  willFire: boolean;
-  components: ScoreComponents;
-  extra: {
-    vwapDevPct: number;
-    atr: number;
-    ema9: number;
-    faTilt: number;
-    btcRegime: string;
-    takerFlow: string;
-    cvdState: string;
-  };
-};
-
-export type SessionCockpit = {
-  session: string;
-  floor: number;
-  tradesToday: number;
-  minTradesPerDay: number;
-  maxTradesPerDay: number;
-  targetTradesPerDay: number;
-  activePlaybooks: string[];
-  btcChange5mPct: number;
-  armed: boolean;
-  tradingEnabled: boolean;
-  regimeLabel: string;
-  signalCount: number;
-  nextFloorDrop?: string;
-};
-
-export type SignalsData = {
-  signals: ProSignal[];
-  session: SessionCockpit;
-  floor: number;
-  regime: RadarRegime;
-};
-
-export type PositionLive = {
-  symbol: string;
-  side: string;
-  entryPrice: number;
-  markPrice: number;
-  quantity: number;
-  remainingQty: number;
-  leverage: number;
-  stopPrice: number;
-  trailPrice?: number;
-  takeProfitPrice: number;
-  unrealizedPnl: number;
-  rMultiple: number;
-  holdSec: number;
-  playbook: string;
-  strengthAtEntry: number;
-  exitPhase: string;
-  peakR: number;
-  rulesArmed: string[];
-  partialPctDone: number;
-  guardianStatus: string;
-};
-
-export type PositionLiveData = {
-  hasPosition: boolean;
-  position: PositionLive;
-};
-
 export type DashboardData = {
   summary: Summary;
   signals: SignalsData | null;
   session: SessionCockpit | null;
   positionLive: PositionLiveData | null;
+  feed: SignalFeedEvent[];
+  playbookStats: PlaybookStat[];
   trades: ClosedTrade[];
   truth: StrategyTruth;
   events: RiskEvent[];
