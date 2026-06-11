@@ -351,6 +351,7 @@ export default function Home() {
         floor={floor}
         busy={busy}
         onExecute={isPaper || isCore ? undefined : executeSymbol}
+        isCore={isCore}
       />
 
       {!isCore && (

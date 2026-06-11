@@ -86,12 +86,35 @@ func (rt *Runtime) scanCoreSwing(ctx context.Context) {
 
 func (rt *Runtime) publishCoreSwingRank(ctx context.Context, now time.Time, canTrade bool, block string, fired *model.ProSignal) {
 	var universe, signals []model.ProSignal
+	triggeredN := 0
 	for _, sym := range config.CoreSwingSymbols() {
 		st, ok := rt.Hub.Snapshot(sym)
 		if !ok {
 			continue
 		}
-		sig := signal.BuildCoreSwingSignal(sym, "", "WAIT", st, canTrade, block)
+		spec, ok := config.CoreSwingSpecFor(sym)
+		if !ok {
+			continue
+		}
+		var sig model.ProSignal
+		if h1, _, ok := rt.Hub.Candles1h(sym); ok {
+			side, triggered, pb := signal.EvalCoreSwing(sym, h1)
+			if triggered {
+				triggeredN++
+				sig = signal.BuildCoreSwingSignal(sym, side, pb, st, canTrade, block)
+			} else {
+				sig = signal.BuildCoreSwingSignal(sym, "", spec.Playbook, st, false, "await_setup")
+				sig.PlaybookTriggered = false
+				sig.Strength = 40
+				sig.Tier = "WAIT"
+				sig.WillFire = false
+				sig.CanExecute = false
+			}
+		} else {
+			sig = signal.BuildCoreSwingSignal(sym, "", spec.Playbook, st, false, "no_1h")
+			sig.PlaybookTriggered = false
+			sig.Tier = "WAIT"
+		}
 		if fired != nil && fired.Symbol == sym {
 			sig = *fired
 		}
@@ -111,12 +134,24 @@ func (rt *Runtime) publishCoreSwingRank(ctx context.Context, now time.Time, canT
 			MaxTradesPerDay: live.MaxTradesPerDay,
 			MinTradesPerDay: 0,
 			TargetTrades: live.TargetTradesPerDay,
-			ActivePlaybooks: []string{"CORE_SWING"},
+			ActivePlaybooks: []string{"S4_SQUEEZE_LIBERAL", "S11_EMA_TREND_STRICT"},
 			Armed: canTrade, TradingEnabled: rt.Risk.Get().TradingEnabled,
 			RegimeLabel: "CORE_SWING",
+			SignalCount: len(signals),
 		},
-		Regime: model.RadarRegime{Label: "CORE_SWING", Summary: fmt.Sprintf("mode=%s agg=%v", live.TradingMode, config.IsCoreSwingAggressive())},
-		Narrative: fmt.Sprintf("Core swing 1h (%s) | trades %d/%d | risk $%.2f",
+		Regime: model.RadarRegime{
+			Label: "CORE_SWING",
+			Summary: fmt.Sprintf("%d/%d playbook triggers · paper=%v",
+				triggeredN, len(config.CoreSwingSymbols()), config.IsPaperMode()),
+			TradeCount: len(signals),
+		},
+		Heartbeat: model.EngineHeartbeat{
+			LastScanAt: now, SymbolsScanned: len(universe),
+			Candidates: triggeredN, WillFireCount: len(signals),
+			MaxStrength: 100, MarketDataHealthy: true,
+			BotState: string(rt.State()), UniverseSize: len(universe),
+		},
+		Narrative: fmt.Sprintf("Core swing 1h (%s) | trades %d/%d | risk $%.2f | auto-entry on 1h close",
 			paperLiveLabel(), rt.Risk.Get().TradesToday, live.MaxTradesPerDay, live.RiskPerTradeUSD),
 	}
 	rt.mu.Lock()

@@ -7,6 +7,7 @@ type Props = {
   floor: number;
   busy: string | null;
   onExecute?: (symbol: string) => void;
+  isCore?: boolean;
 };
 
 function StrengthRing({ strength }: { strength: number }) {
@@ -35,10 +36,12 @@ function SignalCard({
   sig,
   busy,
   onExecute,
+  isCore,
 }: {
   sig: ProSignal;
   busy: string | null;
   onExecute?: (s: string) => void;
+  isCore?: boolean;
 }) {
   const sym = sig.symbol.replace("USDT", "");
   const pbClass = `pb-${sig.playbook.toLowerCase()}`;
@@ -78,32 +81,54 @@ function SignalCard({
         ) : (
           <span className="block-hint">{sig.blockReason?.replace(/_/g, " ") ?? "blocked"}</span>
         )}
-        {sig.willFire && <span className="fire-badge">AUTO WILL FIRE</span>}
+        {sig.willFire && (
+          <span className="fire-badge">
+            {isCore ? "AUTO ON 1H CLOSE" : "AUTO WILL FIRE"}
+          </span>
+        )}
       </div>
     </article>
   );
 }
 
-export function SignalBoard({ signals, floor, busy, onExecute }: Props) {
+export function SignalBoard({ signals, floor, busy, onExecute, isCore }: Props) {
   return (
     <section className="signal-section">
       <div className="signal-section-head">
         <div>
-          <span className="section-tag">Ready signals</span>
+          <span className="section-tag">
+            {isCore ? "Core playbooks" : "Ready signals"}
+          </span>
           <h2 className="signal-title">
-            {signals.length} above floor <span className="mono">{floor}</span>
+            {isCore ? (
+              <>
+                {signals.length} triggered · auto paper entry on 1h close
+              </>
+            ) : (
+              <>
+                {signals.length} above floor <span className="mono">{floor}</span>
+              </>
+            )}
           </h2>
         </div>
       </div>
 
       <div className="signal-grid">
         {signals.map((sig) => (
-          <SignalCard key={sig.symbol} sig={sig} busy={busy} onExecute={onExecute} />
+          <SignalCard key={sig.symbol} sig={sig} busy={busy} onExecute={onExecute} isCore={isCore} />
         ))}
         {!signals.length && (
           <div className="signal-empty">
-            <p>No symbols above strength floor {floor}</p>
-            <span className="mono">Check universe scan below — setups may be building</span>
+            <p>
+              {isCore
+                ? "No 1h playbook triggers right now"
+                : `No symbols above strength floor ${floor}`}
+            </p>
+            <span className="mono">
+              {isCore
+                ? "BTC S4 · ETH S11 · SOL S4 — entries fire automatically in paper mode"
+                : "Check universe scan below — setups may be building"}
+            </span>
           </div>
         )}
       </div>

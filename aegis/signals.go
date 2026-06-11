@@ -13,7 +13,19 @@ import (
 
 func (s *Service) rankSignals(ctx context.Context) signal.RankOutput {
 	_ = ctx
+	if config.IsCoreSwingMode() {
+		return s.rt.LastRank()
+	}
 	return s.rt.RankSignalsAt(time.Now().UTC())
+}
+
+func (s *Service) applySessionFlags(sess *model.SessionCockpit, regime model.RadarRegime) {
+	if sess == nil {
+		return
+	}
+	sess.Armed = s.botArmed()
+	sess.TradingEnabled = tradingEnabled() || paperModeEnabled()
+	sess.BtcChange5mPct = regime.BtcChange5mPct
 }
 
 func proSignalToSnapshot(sig model.ProSignal, floor int, openN, maxOpen int, inPosSym string) model.SymbolSnapshot {
@@ -111,10 +123,7 @@ func (s *Service) Signals(ctx context.Context) (*SignalsResponse, error) {
 	if resp.NearMiss == nil {
 		resp.NearMiss = []model.ProSignal{}
 	}
-	riskSnap := s.rt.Risk.Get()
-	resp.Session.Armed = tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
-	resp.Session.TradingEnabled = tradingEnabled()
-	resp.Session.BtcChange5mPct = out.Regime.BtcChange5mPct
+	s.applySessionFlags(&resp.Session, out.Regime)
 	return resp, nil
 }
 
@@ -122,10 +131,7 @@ func (s *Service) Signals(ctx context.Context) (*SignalsResponse, error) {
 func (s *Service) SignalsSession(ctx context.Context) (*model.SessionCockpit, error) {
 	out := s.rankSignals(ctx)
 	sess := out.Session
-	riskSnap := s.rt.Risk.Get()
-	sess.Armed = tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
-	sess.TradingEnabled = tradingEnabled()
-	sess.BtcChange5mPct = out.Regime.BtcChange5mPct
+	s.applySessionFlags(&sess, out.Regime)
 	return &sess, nil
 }
 
