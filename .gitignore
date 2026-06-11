@@ -1,15 +1,58 @@
+# ── Encore ──────────────────────────────────────────────────────────────
 /.encore
-.psreadline/
-.tmp/
 encore.gen.go
-node_modules/
-.next/
-dashboard/.vercel/
-dashboard/node_modules/
-.env
-.env.local
-aegis/secrets.local.cue
-aegis/.secrets.local.cue
-*.exe
 encore.gen.cue
 /encore.gen
+
+# ── Secrets & env (never commit keys) ───────────────────────────────────
+.env
+.env.*
+!.env.example
+aegis/secrets.local.cue
+aegis/.secrets.local.cue
+
+# ── Go build / test artifacts ───────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+/.tmp/
+
+# ── Node / Next.js dashboard ────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+dashboard/.vercel/
+dashboard/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Backtest: source stays, data & reports stay local ───────────────────
+backtest/cache/
+backtest/**/cache/
+backtest/*.txt
+backtest/**/*.txt
+
+# ── IDE / local tooling ─────────────────────────────────────────────────
+.psreadline/
+.skills/
+.vscode/*
+!.vscode/extensions.json
+
+# ── OS junk ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs & coverage ─────────────────────────────────────────────────────
+*.log
+coverage/
+coverage.out

@@ -6,6 +6,7 @@ import type { StrategyTruth, Summary } from "@/lib/types";
 type Props = {
   summary: Summary | null;
   truth: StrategyTruth | null;
+  isPaper?: boolean;
 };
 
 function Metric({
@@ -28,12 +29,16 @@ function Metric({
   );
 }
 
-export function MetricsRail({ summary, truth }: Props) {
+export function MetricsRail({ summary, truth, isPaper }: Props) {
   const s = summary;
+  const capital = s?.activeCapitalUsd ?? 0;
+  const weekNet = s?.netPnlAfterFees ?? 0;
+  const roiPct = capital > 0 ? (weekNet / capital) * 100 : 0;
+
   return (
     <aside className="metrics-rail">
       <div className="metrics-head">
-        <span className="section-tag">PnL & Risk</span>
+        <span className="section-tag">{isPaper ? "Paper PnL" : "PnL & Risk"}</span>
         {s?.killSwitchActive && <span className="kill-flag">KILL ACTIVE</span>}
       </div>
 
@@ -56,9 +61,20 @@ export function MetricsRail({ summary, truth }: Props) {
       </div>
 
       <div className="metrics-grid">
-        <Metric label="Balance" value={fmtUsd(s?.accountBalance ?? 0)} />
-        <Metric label="Margin" value={fmtUsd(s?.availableMargin ?? 0)} />
-        <Metric label="Capital" value={fmtUsd(s?.activeCapitalUsd ?? 0, 0)} />
+        <Metric
+          label={isPaper ? "Sim equity" : "Balance"}
+          value={fmtUsd(s?.accountBalance ?? 0)}
+        />
+        {!isPaper && <Metric label="Margin" value={fmtUsd(s?.availableMargin ?? 0)} />}
+        <Metric label="Capital" value={fmtUsd(capital, 0)} />
+        {isPaper && (
+          <Metric
+            label="ROI"
+            value={fmtPct(roiPct)}
+            className={pnlClass(weekNet)}
+            sub="on active capital"
+          />
+        )}
         <Metric label="Drawdown" value={fmtUsd(s?.currentDrawdown ?? 0)} className="neg" />
         <Metric label="Fees" value={fmtUsd(s?.feesPaid ?? 0)} />
         <Metric
@@ -71,8 +87,8 @@ export function MetricsRail({ summary, truth }: Props) {
         <Metric label="Closed" value={String(truth?.closedTradeCount ?? 0)} />
         <Metric
           label="Trading"
-          value={s?.tradingEnabled ? "ON" : "OFF"}
-          className={s?.tradingEnabled ? "pos" : ""}
+          value={isPaper ? "PAPER" : s?.tradingEnabled ? "ON" : "OFF"}
+          className={isPaper || s?.tradingEnabled ? "pos" : ""}
         />
       </div>
     </aside>

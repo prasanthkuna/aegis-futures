@@ -26,8 +26,8 @@ import type {
   Summary,
 } from "@/lib/types";
 
-const POLL_MS = 5000;
-const POLL_SEC = POLL_MS / 1000;
+const POLL_MS_ALT = 5000;
+const POLL_MS_CORE = 30000;
 
 const emptyTruth: StrategyTruth = {
   winRate: 0,
@@ -124,7 +124,9 @@ async function loadAll(): Promise<{ data: DashboardData; warnings: string[] }> {
     get("/config/current", null as unknown as BotConfig),
     get("/status", {
       state: "—",
+      tradingMode: "alt_scan",
       tradingEnabled: false,
+      paperMode: false,
       paused: false,
       armed: false,
       universeSize: 0,
@@ -206,9 +208,11 @@ export default function Home() {
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, POLL_MS);
+    const pollMs =
+      data?.status?.tradingMode === "core_swing" ? POLL_MS_CORE : POLL_MS_ALT;
+    const id = setInterval(refresh, pollMs);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, data?.status?.tradingMode]);
 
   async function botAction(path: string) {
     setBusy(path);
@@ -273,6 +277,10 @@ export default function Home() {
 
   const sig = data?.signals;
   const floor = sig?.floor ?? 55;
+  const isCore = data?.status?.tradingMode === "core_swing";
+  const isPaper = data?.status?.paperMode ?? data?.summary?.mode === "paper";
+  const pollSec =
+    (isCore ? POLL_MS_CORE : POLL_MS_ALT) / 1000;
 
   return (
     <div className={`terminal ${loaded ? "terminal-loaded" : ""}`}>
@@ -286,7 +294,7 @@ export default function Home() {
       <TopBar
         status={data?.status ?? null}
         summary={data?.summary ?? null}
-        pollSec={POLL_SEC}
+        pollSec={pollSec}
         busy={busy}
         onStart={() => botAction("/bot/start")}
         onPause={() => botAction("/bot/pause")}
@@ -301,9 +309,16 @@ export default function Home() {
       {warnings.length > 0 && !error && (
         <div className="alert alert-warn">Missing endpoints: {warnings.join(", ")}</div>
       )}
-      {data?.status && !data.status.tradingEnabled && !error && (
+      {isPaper && (
+        <div className="alert alert-paper" role="status">
+          <strong>Paper mode</strong> — simulated fills at mark price, no exchange orders.
+          Run ~2 days, review positions and closed trades, then go live:{" "}
+          <code>AegisPaperMode=0</code> + <code>AegisTradingEnabled=1</code>
+        </div>
+      )}
+      {data?.status && !data.status.tradingEnabled && !isPaper && !error && (
         <div className="alert alert-info">
-          Trading secret off — enable <code>AegisTradingEnabled=true</code> for Execute / auto entries
+          Trading secret off — enable <code>AegisTradingEnabled=1</code> for live orders
         </div>
       )}
 
@@ -311,6 +326,9 @@ export default function Home() {
         session={data?.session ?? null}
         regime={sig?.regime ?? null}
         floor={floor}
+        isCore={isCore}
+        riskUsd={data?.config.riskPerTradeUsd}
+        maxHoldHrs={36}
       />
 
       <EngineHeartbeat
@@ -320,25 +338,33 @@ export default function Home() {
       />
 
       <div className="hero-grid">
-        <PositionCommander data={data?.positionLive ?? null} />
-        <MetricsRail summary={data?.summary ?? null} truth={data?.truth ?? null} />
+        <PositionCommander data={data?.positionLive ?? null} isCore={isCore} />
+        <MetricsRail
+          summary={data?.summary ?? null}
+          truth={data?.truth ?? null}
+          isPaper={isPaper}
+        />
       </div>
 
       <SignalBoard
-        signals={sig?.signals ?? []}
+        signals={isCore ? sig?.universe ?? [] : sig?.signals ?? []}
         floor={floor}
         busy={busy}
-        onExecute={executeSymbol}
+        onExecute={isPaper || isCore ? undefined : executeSymbol}
       />
 
-      <UniverseScan
-        rows={sig?.universe ?? []}
-        floor={floor}
-        busy={busy}
-        onExecute={executeSymbol}
-      />
+      {!isCore && (
+        <>
+          <UniverseScan
+            rows={sig?.universe ?? []}
+            floor={floor}
+            busy={busy}
+            onExecute={executeSymbol}
+          />
 
-      <NearMissStrip items={sig?.nearMiss ?? []} floor={floor} />
+          <NearMissStrip items={sig?.nearMiss ?? []} floor={floor} />
+        </>
+      )}
 
       <div className="bottom-split">
         <SignalFeed events={data?.feed ?? []} />

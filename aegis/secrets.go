@@ -3,11 +3,14 @@ package aegis
 // Required Encore Cloud secrets. Set via Encore dashboard or:
 // encore secret set --type prod,dev <Name>
 var secrets struct {
-	BinanceAPIKey       string
-	BinanceAPISecret    string
-	BinanceUseTestnet   string
-	AegisTradingEnabled string
-	AegisEnv            string
+	BinanceAPIKey        string
+	BinanceAPISecret     string
+	BinanceUseTestnet    string
+	AegisTradingEnabled  string
+	AegisCoreSwing       string
+	AegisAggressiveMode  string
+	AegisPaperMode       string
+	AegisEnv             string
 }
 
 func binanceAPIKey() string       { return secrets.BinanceAPIKey }
@@ -29,5 +32,20 @@ func tradingEnabled() bool {
 
 func useTestnet() bool {
 	v := binanceUseTestnetRaw()
+	return v == "true" || v == "1"
+}
+
+func coreSwingEnabled() bool {
+	v := secrets.AegisCoreSwing
+	return v == "true" || v == "1"
+}
+
+func aggressiveMode() bool {
+	v := secrets.AegisAggressiveMode
+	return v == "true" || v == "1"
+}
+
+func paperModeEnabled() bool {
+	v := secrets.AegisPaperMode
 	return v == "true" || v == "1"
 }

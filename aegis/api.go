@@ -18,12 +18,15 @@ import (
 type StatusResponse struct {
 	Status         string `json:"status"`
 	State          string `json:"state"`
+	TradingMode    string `json:"tradingMode"`
 	TradingEnabled bool   `json:"tradingEnabled"`
+	PaperMode      bool   `json:"paperMode"`
 	Paused         bool   `json:"paused"`
 	Armed          bool   `json:"armed"`
 	UniverseSize   int    `json:"universeSize"`
 	Testnet        bool   `json:"testnet"`
 	Env            string `json:"env"`
+	Aggressive     bool   `json:"aggressive"`
 }
 
 type AccountHealthResponse struct {
@@ -62,47 +65,70 @@ func (s *Service) AccountHealth(ctx context.Context) (*AccountHealthResponse, er
 	return out, nil
 }
 
+func (s *Service) botArmed() bool {
+	snap := s.rt.Risk.Get()
+	return (tradingEnabled() || paperModeEnabled()) && !snap.Paused && !snap.KillSwitch
+}
+
 //encore:api public method=GET path=/status
 func (s *Service) Status(ctx context.Context) (*StatusResponse, error) {
 	snap := s.rt.Risk.Get()
-	armed := tradingEnabled() && !snap.Paused && !snap.KillSwitch
 	return &StatusResponse{
 		Status: "ok", State: string(s.rt.State()),
-		TradingEnabled: tradingEnabled(), Paused: snap.Paused, Armed: armed,
+		TradingMode: config.Live.Get().TradingMode,
+		TradingEnabled: tradingEnabled(), PaperMode: paperModeEnabled(),
+		Paused: snap.Paused, Armed: s.botArmed(),
 		UniverseSize: len(s.rt.Universe.ActiveSymbols()),
 		Testnet: useTestnet(), Env: aegisEnv(),
+		Aggressive: config.IsCoreSwingAggressive(),
 	}, nil
 }
 
 //encore:api public method=GET path=/dashboard/summary
 func (s *Service) DashboardSummary(ctx context.Context) (*model.DashboardSummary, error) {
-	today, week, fees, _ := s.rt.Ledger.RealizedPnLSummary(ctx)
 	live := config.Live.Get()
+	now := time.Now().UTC()
 	sum := &model.DashboardSummary{
-		Mode:             "live",
 		BotStatus:        string(s.rt.State()),
 		ActiveCapitalUsd: live.ActiveCapitalUSD,
-		RealizedPnL:      week,
-		NetPnLAfterFees:  week - fees,
-		TodayPnL:         today,
-		WeeklyPnL:        week,
-		FeesPaid:         fees,
 		KillSwitchActive: s.rt.Risk.Get().KillSwitch,
-		TradingEnabled:   tradingEnabled(),
+		TradingEnabled:   tradingEnabled() || paperModeEnabled(),
 		Testnet:          useTestnet(),
 	}
-	if s.rt.Binance != nil {
-		if acct, err := s.rt.Binance.Account(ctx); err == nil {
-			sum.AccountBalance = binanceex.ParseFloat(acct.TotalWalletBalance)
-			sum.AvailableMargin = binanceex.ParseFloat(acct.AvailableBalance)
+
+	if paperModeEnabled() && s.rt.PaperLedger() != nil {
+		pl := s.rt.PaperLedger()
+		today, week, fees := pl.RealizedSummary(now)
+		sum.Mode = "paper"
+		sum.TodayPnL = today
+		sum.WeeklyPnL = week
+		sum.RealizedPnL = week
+		sum.NetPnLAfterFees = week
+		sum.FeesPaid = fees
+		sum.AccountBalance = live.ActiveCapitalUSD + week
+		sum.AvailableMargin = sum.AccountBalance
+		sum.CurrentDrawdown = pl.MaxDrawdown()
+	} else {
+		today, week, fees, _ := s.rt.Ledger.RealizedPnLSummary(ctx)
+		sum.Mode = "live"
+		sum.RealizedPnL = week
+		sum.NetPnLAfterFees = week - fees
+		sum.TodayPnL = today
+		sum.WeeklyPnL = week
+		sum.FeesPaid = fees
+		if s.rt.Binance != nil {
+			if acct, err := s.rt.Binance.Account(ctx); err == nil {
+				sum.AccountBalance = binanceex.ParseFloat(acct.TotalWalletBalance)
+				sum.AvailableMargin = binanceex.ParseFloat(acct.AvailableBalance)
+			}
 		}
+		var fundingPaid float64
+		_ = db.QueryRow(ctx, `
+			SELECT COALESCE(SUM(funding), 0) FROM trades WHERE exit_time IS NOT NULL
+		`).Scan(&fundingPaid)
+		sum.FundingPaid = fundingPaid
+		sum.CurrentDrawdown = s.maxDrawdown(ctx)
 	}
-	var fundingPaid float64
-	_ = db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(funding), 0) FROM trades WHERE exit_time IS NOT NULL
-	`).Scan(&fundingPaid)
-	sum.FundingPaid = fundingPaid
-	sum.CurrentDrawdown = s.maxDrawdown(ctx)
 
 	if pos := s.rt.OpenPosition(); pos != nil {
 		sum.HasOpenPosition = true
@@ -318,6 +344,22 @@ type TradesResponse struct {
 
 //encore:api public method=GET path=/trades/closed
 func (s *Service) ClosedTrades(ctx context.Context) (*TradesResponse, error) {
+	if paperModeEnabled() && s.rt.PaperLedger() != nil {
+		raw := s.rt.PaperLedger().ClosedTrades()
+		trades := make([]ClosedTrade, 0, len(raw))
+		for _, t := range raw {
+			exitPx := t.ExitPrice
+			trades = append(trades, ClosedTrade{
+				ID: t.ID, Symbol: t.Symbol, Side: string(t.Side),
+				EntryTime: t.EntryTime, ExitTime: &t.ExitTime,
+				EntryPrice: t.EntryPrice, ExitPrice: &exitPx,
+				Quantity: t.Quantity, GrossPnL: t.GrossPnL, Fees: t.Fees,
+				NetPnL: t.NetPnL, RMultiple: t.RMultiple, ExitReason: t.ExitReason,
+				TradeScore: 1, Session: &t.Session,
+			})
+		}
+		return &TradesResponse{Trades: trades}, nil
+	}
 	rows, err := db.Query(ctx, `
 		SELECT id, symbol, side, entry_time, exit_time, entry_price, exit_price,
 			quantity, gross_pnl, fees, funding, net_pnl, r_multiple,
@@ -444,6 +486,22 @@ type StrategyTruthResponse struct {
 //encore:api public method=GET path=/dashboard/strategy-truth
 func (s *Service) GetStrategyTruth(ctx context.Context) (*StrategyTruthResponse, error) {
 	out := &StrategyTruthResponse{}
+	if paperModeEnabled() && s.rt.PaperLedger() != nil {
+		wins, total, avgWin, avgLoss, sumWin, sumLossAbs, expectancy, maxDD := s.rt.PaperLedger().StrategyTruth()
+		out.ClosedTradeCount = total
+		out.MaxDrawdown = maxDD
+		if total > 0 {
+			out.WinRate = float64(wins) / float64(total)
+		}
+		out.AvgWin = avgWin
+		out.AvgLoss = avgLoss
+		if sumLossAbs > 0 {
+			out.ProfitFactor = sumWin / sumLossAbs
+		}
+		out.ExpectancyPerTrade = expectancy
+		out.ExpectancyAfterFees = expectancy
+		return out, nil
+	}
 	_ = db.QueryRow(ctx, `SELECT COUNT(*) FROM missed_trades`).Scan(&out.MissedTradeCount)
 	_ = db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM risk_events

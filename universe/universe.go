@@ -20,13 +20,19 @@ type Entry struct {
 }
 
 type Manager struct {
-	hub    *market.Hub
-	client *binanceex.Client
-	active []string
+	hub      *market.Hub
+	client   *binanceex.Client
+	active   []string
+	coreOnly bool
 }
 
 func NewManager(hub *market.Hub, client *binanceex.Client) *Manager {
 	return &Manager{hub: hub, client: client, active: append([]string{}, config.AlwaysInclude...)}
+}
+
+func (m *Manager) SetCoreOnly(v bool) {
+	m.coreOnly = v
+	m.active = append([]string{}, config.AlwaysInclude...)
 }
 
 func (m *Manager) ActiveSymbols() []string {
@@ -36,6 +42,10 @@ func (m *Manager) ActiveSymbols() []string {
 }
 
 func (m *Manager) Refresh(ctx context.Context) ([]Entry, error) {
+	if m.coreOnly {
+		m.active = append([]string{}, config.AlwaysInclude...)
+		return nil, nil
+	}
 	tickers, err := m.client.Ticker24hrAll(ctx)
 	if err != nil {
 		return nil, err

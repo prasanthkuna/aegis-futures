@@ -71,6 +71,89 @@ func evalSessionBreakout(st market.SymbolState) PlaybookResult {
 	return PlaybookResult{ID: "SESSION_BREAKOUT", Side: side, Score: raw, Triggered: triggered}
 }
 
+func evalForcedFlowFade(st market.SymbolState) PlaybookResult {
+	vol := volumeSurge(st.Candles5m)
+	vwap := market.VWAP(st.Candles5m)
+	dev := market.VWAPDeviation(st.LastPrice, vwap)
+	oiFlush := st.OIDeltaPct <= -2.5
+	crowdedLong := st.FundingRate > 0.00025
+	crowdedShort := st.FundingRate < -0.00025
+	taker := st.TakerBuySellRatio
+	side := model.SideLong
+	triggered := false
+	if oiFlush && dev <= -1.0 && (taker >= 1.1 || crowdedShort) {
+		triggered, side = true, model.SideLong
+	}
+	if oiFlush && dev >= 1.0 && (taker <= 0.9 || crowdedLong) {
+		triggered, side = true, model.SideShort
+	}
+	raw := clamp01(math.Abs(st.OIDeltaPct)/6)*0.35 + clamp01(math.Abs(dev)/2)*0.25 +
+		vol*0.2 + clamp01(math.Abs(taker-1))*0.2
+	return PlaybookResult{ID: "FORCED_FLOW_FADE", Side: side, Score: raw, Triggered: triggered}
+}
+
+// evalBBStretchRevert — Bandtastic / Strategy003 style: BB(20,2) stretch + RSI + flow confirm.
+func evalBBStretchRevert(st market.SymbolState) PlaybookResult {
+	candles := st.Candles5m
+	last := lastClose(candles)
+	lower, _, upper := market.BollingerBands(candles, 20, 2)
+	rsi := market.RSI(candles, 14)
+	cvd, flow, _ := cvdMetrics(st)
+	vol := volumeSurge(candles)
+	side := model.SideLong
+	triggered := false
+	if lower > 0 && last <= lower && rsi < 35 && (flow == "buy" || cvd >= 0.3) {
+		triggered, side = true, model.SideLong
+	}
+	if upper > 0 && last >= upper && rsi > 65 && (flow == "sell" || cvd >= 0.3) {
+		triggered, side = true, model.SideShort
+	}
+	dev := 0.0
+	if lower > 0 && upper > 0 {
+		mid := (lower + upper) / 2
+		if mid > 0 {
+			dev = math.Abs(last-mid) / mid * 100
+		}
+	}
+	raw := clamp01(dev/3)*0.45 + clamp01((35-rsi)/35)*0.25 + cvd*0.2 + vol*0.1
+	if rsi > 65 {
+		raw = clamp01(dev/3)*0.45 + clamp01((rsi-65)/35)*0.25 + cvd*0.2 + vol*0.1
+	}
+	return PlaybookResult{ID: "BB_STRETCH_REVERT", Side: side, Score: raw, Triggered: triggered}
+}
+
+// evalVolClimaxFade — Strategy005 / v2 volume climax exhaustion at VWAP stretch.
+func evalVolClimaxFade(st market.SymbolState) PlaybookResult {
+	vol := volumeSurge(st.Candles5m)
+	vwap := market.VWAP(st.Candles5m)
+	dev := market.VWAPDeviation(st.LastPrice, vwap)
+	cvd, flow, _ := cvdMetrics(st)
+	rsi := market.RSI(st.Candles5m, 14)
+	side := model.SideLong
+	triggered := false
+	if vol >= 0.65 && dev <= -0.9 && rsi < 42 && (flow == "buy" || cvd >= 0.25) {
+		triggered, side = true, model.SideLong
+	}
+	if vol >= 0.65 && dev >= 0.9 && rsi > 58 && (flow == "sell" || cvd >= 0.25) {
+		triggered, side = true, model.SideShort
+	}
+	raw := vol*0.35 + clamp01(math.Abs(dev)/2.5)*0.35 + cvd*0.2 + clamp01(math.Abs(rsi-50)/50)*0.1
+	return PlaybookResult{ID: "VOL_CLIMAX_FADE", Side: side, Score: raw, Triggered: triggered}
+}
+
+func isChopRegime(st market.SymbolState) bool {
+	candles := st.Candles5m
+	if len(candles) < 25 || st.LastPrice <= 0 {
+		return true
+	}
+	ema9 := market.EMA(candles, 9)
+	ema21 := market.EMA(candles, 21)
+	atr := market.ATR(candles, 14)
+	trendSep := math.Abs(ema9-ema21) / st.LastPrice * 100
+	atrPct := atr / st.LastPrice * 100
+	return trendSep < 0.12 || atrPct < 0.35
+}
+
 func evalMeanRevert(st market.SymbolState, chop bool) PlaybookResult {
 	vwap := market.VWAP(st.Candles5m)
 	dev := market.VWAPDeviation(st.LastPrice, vwap)

@@ -150,6 +150,7 @@ export type PositionLive = {
   rulesArmed: string[];
   partialPctDone: number;
   guardianStatus: string;
+  paper?: boolean;
 };
 
 export type PositionLiveData = {
@@ -211,10 +212,13 @@ export type StrategyTruth = {
 
 export type BotStatus = {
   state: string;
+  tradingMode?: string;
   tradingEnabled: boolean;
+  paperMode?: boolean;
   paused: boolean;
   armed: boolean;
   universeSize: number;
+  aggressive?: boolean;
 };
 
 export type DashboardData = {

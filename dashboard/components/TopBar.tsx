@@ -25,6 +25,8 @@ export function TopBar({
 }: Props) {
   const armed = status?.armed;
   const state = status?.state ?? "—";
+  const isCore = status?.tradingMode === "core_swing";
+  const isPaper = status?.paperMode;
 
   return (
     <header className="topbar">
@@ -32,15 +34,34 @@ export function TopBar({
         <div className="brand-mark" aria-hidden />
         <div>
           <h1>AEGIS</h1>
-          <span className="brand-sub">Futures Command</span>
+          <span className="brand-sub">
+            {isCore ? "Core Swing Command" : "Futures Command"}
+          </span>
         </div>
       </div>
 
       <div className="status-rail">
         <span className={`pill state-${state.toLowerCase()}`}>{state}</span>
-        <span className={`pill ${armed ? "pill-live" : "pill-dim"}`}>
-          <span className="pulse" aria-hidden />
-          {armed ? "ARMED" : "STANDBY"}
+        {isPaper ? (
+          <span className="pill pill-paper">
+            <span className="pulse" aria-hidden />
+            PAPER
+          </span>
+        ) : status?.tradingEnabled ? (
+          <span className="pill pill-live">
+            <span className="pulse" aria-hidden />
+            LIVE
+          </span>
+        ) : (
+          <span className={`pill ${armed ? "pill-live" : "pill-dim"}`}>
+            <span className="pulse" aria-hidden />
+            {armed ? "ARMED" : "STANDBY"}
+          </span>
+        )}
+        <span className={`pill ${isCore ? "pill-live" : "pill-dim"}`}>
+          {isCore
+            ? `CORE 1H${status?.aggressive ? " AGG" : ""}`
+            : "ALT SCAN"}
         </span>
         <span className="pill pill-dim">
           {status?.universeSize ?? 0} sym

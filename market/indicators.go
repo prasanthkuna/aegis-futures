@@ -62,3 +62,47 @@ func VWAPDeviation(price, vwap float64) float64 {
 	}
 	return (price - vwap) / vwap * 100
 }
+
+// RSI returns Wilder RSI for the last candle (period typically 14).
+func RSI(candles []Candle, period int) float64 {
+	if len(candles) < period+1 || period <= 0 {
+		return 50
+	}
+	var gain, loss float64
+	for i := len(candles) - period; i < len(candles); i++ {
+		d := candles[i].Close - candles[i-1].Close
+		if d > 0 {
+			gain += d
+		} else {
+			loss -= d
+		}
+	}
+	if loss <= 0 {
+		return 100
+	}
+	rs := (gain / float64(period)) / (loss / float64(period))
+	return 100 - (100 / (1 + rs))
+}
+
+// BollingerBands on typical price; returns lower, mid, upper for the last bar.
+func BollingerBands(candles []Candle, period int, stds float64) (lower, mid, upper float64) {
+	if len(candles) < period || period <= 0 {
+		return 0, 0, 0
+	}
+	start := len(candles) - period
+	var sum float64
+	for i := start; i < len(candles); i++ {
+		sum += (candles[i].High + candles[i].Low + candles[i].Close) / 3
+	}
+	mid = sum / float64(period)
+	var varSum float64
+	for i := start; i < len(candles); i++ {
+		tp := (candles[i].High + candles[i].Low + candles[i].Close) / 3
+		d := tp - mid
+		varSum += d * d
+	}
+	sd := math.Sqrt(varSum / float64(period))
+	lower = mid - stds*sd
+	upper = mid + stds*sd
+	return lower, mid, upper
+}

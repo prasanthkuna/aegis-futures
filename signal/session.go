@@ -19,25 +19,25 @@ func CurrentSession(now time.Time) SessionProfile {
 	case h >= 0 && h < 8:
 		return SessionProfile{
 			Name: "asia", Floor: 55, MaxSpreadBps: 10, SizeMult: 0.85,
-			Playbooks: []string{"SESSION_BREAKOUT", "MEAN_REVERT_VWAP"},
+			Playbooks: []string{"SESSION_BREAKOUT", "MEAN_REVERT_VWAP", "VOL_CLIMAX_FADE", "FORCED_FLOW_FADE"},
 			VolW: 0.20, CvdW: 0.25, StructW: 0.15, VwapW: 0.40, DepthW: 0.05, SessW: 0.05,
 		}
 	case h >= 8 && h < 14:
 		return SessionProfile{
 			Name: "london", Floor: 58, MaxSpreadBps: 8, SizeMult: 1.0,
-			Playbooks: []string{"MOMENTUM_BURST", "SESSION_BREAKOUT"},
+			Playbooks: []string{"MOMENTUM_BURST", "SESSION_BREAKOUT", "FORCED_FLOW_FADE"},
 			VolW: 0.30, CvdW: 0.30, StructW: 0.35, VwapW: 0.05, DepthW: 0.05, SessW: 0.05,
 		}
 	case h >= 14 && h < 22:
 		return SessionProfile{
 			Name: "us", Floor: 58, MaxSpreadBps: 8, SizeMult: 1.0,
-			Playbooks: []string{"MOMENTUM_BURST", "SESSION_BREAKOUT"},
+			Playbooks: []string{"MOMENTUM_BURST", "SESSION_BREAKOUT", "FORCED_FLOW_FADE"},
 			VolW: 0.35, CvdW: 0.35, StructW: 0.25, VwapW: 0.05, DepthW: 0.05, SessW: 0.05,
 		}
 	default:
 		return SessionProfile{
 			Name: "late_us", Floor: 52, MaxSpreadBps: 12, SizeMult: 0.9,
-			Playbooks: []string{"MEAN_REVERT_VWAP", "MOMENTUM_BURST"},
+			Playbooks: []string{"MEAN_REVERT_VWAP", "VOL_CLIMAX_FADE", "MOMENTUM_BURST", "FORCED_FLOW_FADE"},
 			VolW: 0.25, CvdW: 0.25, StructW: 0.20, VwapW: 0.30, DepthW: 0.05, SessW: 0.05,
 		}
 	}

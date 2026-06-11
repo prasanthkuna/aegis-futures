@@ -4,16 +4,17 @@ import "sync"
 
 // Snapshot is the trading/risk config used by engine, strategy, and risk.
 type Snapshot struct {
-	ActiveCapitalUSD  float64
-	RiskPerTradeUSD   float64
-	MinTradeScore     float64
-	MaxLeverage       int
-	MaxOpenPositions  int
-	MaxTradesPerDay   int
-	MinTradesPerDay   int
+	TradingMode        string
+	ActiveCapitalUSD   float64
+	RiskPerTradeUSD    float64
+	MinTradeScore      float64
+	MaxLeverage        int
+	MaxOpenPositions   int
+	MaxTradesPerDay    int
+	MinTradesPerDay    int
 	TargetTradesPerDay int
-	DailyHardStopUSD  float64
-	WeeklyHardStopUSD float64
+	DailyHardStopUSD   float64
+	WeeklyHardStopUSD  float64
 }
 
 // Live holds DB-backed settings; falls back to package defaults until loaded.
@@ -32,7 +33,8 @@ func (l *liveSettings) ApplyDefaults() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.s = Snapshot{
-		ActiveCapitalUSD:  ActiveCapitalUSD,
+		TradingMode:        TradingModeAltScan,
+		ActiveCapitalUSD:   ActiveCapitalUSD,
 		RiskPerTradeUSD:   RiskPerTradeUSD,
 		MinTradeScore:     MinTradeScore,
 		MaxLeverage:       MaxLeverage,

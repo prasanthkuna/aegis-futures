@@ -24,6 +24,12 @@ type SymbolState struct {
 	TakerBuyVol    float64
 	TakerSellVol   float64
 	FlowUpdated    time.Time
+	// Binance context (OI/funding/positioning) — zero when unavailable.
+	OpenInterest        float64
+	OIDeltaPct        float64 // vs ~15m ago
+	FundingRate         float64
+	TakerBuySellRatio   float64
+	LongShortRatio      float64
 	mu             sync.RWMutex
 }
 
@@ -97,9 +103,57 @@ func (h *Hub) OnKline(k binanceex.Kline) {
 		Volume: k.Volume, CloseTime: k.CloseTime,
 	})
 	max := config.SwingLookback + 2
+	if config.IsCoreSwingMode() || isCoreSymbol(k.Symbol) {
+		max = config.CoreSwing5mKeep
+	}
 	if len(st.Candles5m) > max {
 		st.Candles5m = st.Candles5m[len(st.Candles5m)-max:]
 	}
+}
+
+func isCoreSymbol(symbol string) bool {
+	for _, s := range config.AlwaysInclude {
+		if s == symbol {
+			return true
+		}
+	}
+	return false
+}
+
+// SeedCandles5m replaces 5m history (REST bootstrap).
+func (h *Hub) SeedCandles5m(symbol string, bars []binanceex.KlineBar) {
+	if len(bars) == 0 {
+		return
+	}
+	st := h.Ensure(symbol)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := make([]Candle, len(bars))
+	for i, b := range bars {
+		out[i] = Candle{
+			Open: b.Open, High: b.High, Low: b.Low, Close: b.Close,
+			Volume: b.Volume, CloseTime: b.CloseTime,
+		}
+	}
+	max := config.CoreSwing5mKeep
+	if len(out) > max {
+		out = out[len(out)-max:]
+	}
+	st.Candles5m = out
+}
+
+// Candles1h returns resampled 1h bars and the latest 1h close time.
+func (h *Hub) Candles1h(symbol string) ([]Candle, time.Time, bool) {
+	st, ok := h.Snapshot(symbol)
+	if !ok || len(st.Candles5m) < config.CoreSwing1hBars*55 {
+		return nil, time.Time{}, false
+	}
+	h1 := Resample5mTo1h(st.Candles5m, config.CoreSwing1hBars)
+	if len(h1) < 55 {
+		return nil, time.Time{}, false
+	}
+	last := h1[len(h1)-1].CloseTime
+	return h1, last, true
 }
 
 func (h *Hub) SetQuoteVolume(symbol string, vol float64) {

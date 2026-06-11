@@ -43,6 +43,8 @@ type Runtime struct {
 	lastRank      signal.RankOutput
 	feed          []model.SignalFeedEvent
 	feedMu        sync.RWMutex
+	last1hClose   map[string]time.Time
+	paper         *PaperLedger
 
 	// OnUniverseChanged is called after universe refresh (e.g. resubscribe WS).
 	OnUniverseChanged func(symbols []string)
@@ -64,8 +66,13 @@ func NewRuntime(
 		Ledger: led, Telegram: tg, CoinGlass: cg, Binance: bc,
 		exitMgr: &exit.Manager{Execution: ex},
 		state: model.StateIdle, cgScores: make(map[string]float64),
-		lastWSHealthy: time.Now(),
+		lastWSHealthy: time.Now(), last1hClose: make(map[string]time.Time),
+		paper: NewPaperLedger(),
 	}
+}
+
+func (rt *Runtime) PaperLedger() *PaperLedger {
+	return rt.paper
 }
 
 func (rt *Runtime) State() model.BotState {
@@ -140,6 +147,15 @@ func (rt *Runtime) refreshUniverse(ctx context.Context) {
 	if rt.Universe == nil || rt.Binance == nil {
 		return
 	}
+	if config.IsCoreSwingMode() {
+		rt.Universe.SetCoreOnly(true)
+		rt.Risk.SetMarketHealthy(true)
+		rt.lastWSHealthy = time.Now()
+		if rt.OnUniverseChanged != nil {
+			rt.OnUniverseChanged(rt.Universe.ActiveSymbols())
+		}
+		return
+	}
 	_, err := rt.Universe.Refresh(ctx)
 	if err != nil {
 		log.Printf("universe refresh: %v", err)
@@ -154,6 +170,9 @@ func (rt *Runtime) refreshUniverse(ctx context.Context) {
 }
 
 func (rt *Runtime) coinGlassLoop(ctx context.Context) {
+	if config.IsCoreSwingMode() {
+		return
+	}
 	t := time.NewTicker(config.CoinGlassPoll)
 	defer t.Stop()
 	for {
@@ -204,6 +223,10 @@ func (rt *Runtime) guardianLoop(ctx context.Context) {
 }
 
 func (rt *Runtime) scan(ctx context.Context) {
+	if config.IsCoreSwingMode() {
+		rt.scanCoreSwing(ctx)
+		return
+	}
 	now := time.Now().UTC()
 	rt.Risk.ResetDailyIfNeeded(now)
 	out := rt.rankSignals(now)

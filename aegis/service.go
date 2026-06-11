@@ -9,6 +9,7 @@ import (
 	"encore.app/alerts"
 	"encore.app/binanceex"
 	"encore.app/coinglass"
+	"encore.app/config"
 	"encore.app/engine"
 	"encore.app/execution"
 	"encore.app/guardian"
@@ -36,7 +37,8 @@ func initService() (*Service, error) {
 	}
 	uni := universe.NewManager(hub, bc)
 	r := risk.NewEngine()
-	r.SetTradingEnabled(tradingEnabled())
+	config.SetPaperMode(paperModeEnabled())
+	r.SetTradingEnabled(tradingEnabled() || paperModeEnabled())
 	ex := execution.New(bc)
 	g := guardian.New(bc, ex)
 	led := ledger.New(db)
@@ -51,6 +53,13 @@ func initService() (*Service, error) {
 
 	if err := loadBotConfig(ctx); err != nil {
 		log.Printf("bot_config load (defaults): %v", err)
+	}
+
+	config.SetCoreSwingMode(coreSwingEnabled(), aggressiveMode())
+	if config.IsCoreSwingMode() {
+		config.ApplyCoreSwingLiveConfig()
+		uni.SetCoreOnly(true)
+		log.Printf("core swing mode ON (conservative=%v)", !config.IsCoreSwingAggressive())
 	}
 
 	cb := binanceex.WSCallbacks{
@@ -73,9 +82,25 @@ func initService() (*Service, error) {
 	}
 	ws.ReplaceStreams(ctx, uni.ActiveSymbols())
 
+	if config.IsCoreSwingMode() && bc != nil {
+		for _, sym := range config.CoreSwingSymbols() {
+			bars, err := bc.FetchKlines5mHistory(ctx, sym, config.CoreSwing5mKeep)
+			if err != nil {
+				log.Printf("seed klines %s: %v", sym, err)
+				continue
+			}
+			hub.SeedCandles5m(sym, bars)
+			log.Printf("seeded %s: %d 5m bars", sym, len(bars))
+		}
+	}
+
 	rt.Start(ctx)
-	log.Printf("aegis engine started (testnet=%v trading=%v symbols=%d)",
-		useTestnet(), tradingEnabled(), len(uni.ActiveSymbols()))
+	mode := "alt_scan"
+	if config.IsCoreSwingMode() {
+		mode = "core_swing"
+	}
+	log.Printf("aegis engine started mode=%s testnet=%v trading=%v paper=%v symbols=%d",
+		mode, useTestnet(), tradingEnabled(), paperModeEnabled(), len(uni.ActiveSymbols()))
 	return svc, nil
 }
 

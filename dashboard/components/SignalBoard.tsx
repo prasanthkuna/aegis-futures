@@ -6,7 +6,7 @@ type Props = {
   signals: ProSignal[];
   floor: number;
   busy: string | null;
-  onExecute: (symbol: string) => void;
+  onExecute?: (symbol: string) => void;
 };
 
 function StrengthRing({ strength }: { strength: number }) {
@@ -38,7 +38,7 @@ function SignalCard({
 }: {
   sig: ProSignal;
   busy: string | null;
-  onExecute: (s: string) => void;
+  onExecute?: (s: string) => void;
 }) {
   const sym = sig.symbol.replace("USDT", "");
   const pbClass = `pb-${sig.playbook.toLowerCase()}`;
@@ -66,7 +66,7 @@ function SignalCard({
       </div>
 
       <div className="sig-card-actions">
-        {sig.canExecute ? (
+        {sig.canExecute && onExecute ? (
           <button
             type="button"
             className="btn-exec wide"

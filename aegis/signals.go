@@ -231,20 +231,27 @@ func (s *Service) PositionLive(ctx context.Context) (*PositionLiveResponse, erro
 		hold = (time.Now().UnixMilli() - pos.EntryTime) / 1000
 	}
 	guard := "active"
-	if !pos.HasStop {
+	if pos.Paper {
+		guard = "paper"
+	} else if !pos.HasStop {
 		guard = "stop_missing"
 	}
-	rules := []string{"hard_stop"}
-	switch pos.ExitPhase {
-	case "BREAKEVEN":
-		rules = append(rules, "be_0.5r")
-	case "PARTIAL_1":
-		rules = append(rules, "partial_1r", "trail_armed")
-	case "TRAILING":
-		rules = append(rules, "atr_trail")
-	default:
-		if rMult >= 0.5 {
-			rules = append(rules, "be_pending")
+	var rules []string
+	if config.IsCoreSwingMode() {
+		rules = []string{"hard_stop", "core_rr_tp", "core_time_stop"}
+	} else {
+		rules = []string{"hard_stop"}
+		switch pos.ExitPhase {
+		case "BREAKEVEN":
+			rules = append(rules, "be_0.5r")
+		case "PARTIAL_1":
+			rules = append(rules, "partial_1r", "trail_armed")
+		case "TRAILING":
+			rules = append(rules, "atr_trail")
+		default:
+			if rMult >= 0.5 {
+				rules = append(rules, "be_pending")
+			}
 		}
 	}
 	return &PositionLiveResponse{
@@ -256,7 +263,7 @@ func (s *Service) PositionLive(ctx context.Context) (*PositionLiveResponse, erro
 			UnrealizedPnL: upnl, RMultiple: rMult, HoldSec: hold,
 			Playbook: pos.Playbook, StrengthAtEntry: pos.StrengthAtEntry,
 			ExitPhase: pos.ExitPhase, PeakR: pos.PeakR, RulesArmed: rules,
-			PartialPct: pos.PartialPct, GuardianStatus: guard,
+			PartialPct: pos.PartialPct, GuardianStatus: guard, Paper: pos.Paper,
 		},
 	}, nil
 }

@@ -3,7 +3,7 @@
 import { fmtDuration, fmtNum, fmtUsd, pnlClass } from "@/lib/format";
 import type { PositionLiveData } from "@/lib/types";
 
-type Props = { data: PositionLiveData | null };
+type Props = { data: PositionLiveData | null; isCore?: boolean };
 
 function StrengthRing({ value, max = 100 }: { value: number; max?: number }) {
   const pct = Math.min(1, value / max);
@@ -25,7 +25,7 @@ function StrengthRing({ value, max = 100 }: { value: number; max?: number }) {
   );
 }
 
-export function PositionCommander({ data }: Props) {
+export function PositionCommander({ data, isCore }: Props) {
   if (!data?.hasPosition) {
     return (
       <section className="commander-panel flat-state">
@@ -36,7 +36,11 @@ export function PositionCommander({ data }: Props) {
             ◎
           </span>
           <h2>Flat</h2>
-          <p>Scanning universe for signals above floor</p>
+          <p>
+            {isCore
+              ? "Watching BTC · ETH · SOL for 1h playbook triggers"
+              : "Scanning universe for signals above floor"}
+          </p>
         </div>
       </section>
     );
@@ -45,11 +49,12 @@ export function PositionCommander({ data }: Props) {
   const p = data.position;
   const phase = p.exitPhase || "PROTECTED";
   const rPct = Math.min(100, Math.max(0, (p.rMultiple + 1) * 33));
+  const label = p.paper ? "Paper Position" : "Live Position";
 
   return (
-    <section className="commander-panel in-position">
+    <section className={`commander-panel in-position${p.paper ? " paper-position" : ""}`}>
       <div className="commander-top">
-        <span className="section-tag">Live Position</span>
+        <span className="section-tag">{label}</span>
         <span className={`phase-tag phase-${phase.toLowerCase()}`}>{phase}</span>
       </div>
 

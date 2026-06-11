@@ -94,6 +94,20 @@ func (e *Engine) RecordTradeResult(netPnL float64) {
 	}
 }
 
+// RecordClosePnL updates realized PnL without incrementing trade count (entry already counted).
+func (e *Engine) RecordClosePnL(netPnL float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.s.DailyPnL += netPnL
+	e.s.WeeklyPnL += netPnL
+	if netPnL < 0 {
+		e.s.ConsecutiveLosses++
+		e.s.CooldownUntil = time.Now().Add(config.CooldownAfterLossMins * time.Minute)
+	} else {
+		e.s.ConsecutiveLosses = 0
+	}
+}
+
 func (e *Engine) ResetDailyIfNeeded(now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

@@ -7,9 +7,12 @@ type Props = {
   session: SessionData | null;
   regime: SignalsData["regime"] | null;
   floor: number;
+  isCore?: boolean;
+  riskUsd?: number;
+  maxHoldHrs?: number;
 };
 
-export function SessionStrip({ session, regime, floor }: Props) {
+export function SessionStrip({ session, regime, floor, isCore, riskUsd, maxHoldHrs }: Props) {
   if (!session) {
     return (
       <div className="session-strip skeleton-strip">
@@ -39,15 +42,27 @@ export function SessionStrip({ session, regime, floor }: Props) {
 
       <div className="strip-divider" />
 
-      <div className="strip-block strip-floor">
-        <span className="strip-label">Strength floor</span>
-        <strong className="strip-value mono floor-num">{floor}</strong>
-        <span className="strip-hint">
-          {session.nextFloorDrop ? `↓ ${session.nextFloorDrop}` : "Locked"}
-        </span>
-      </div>
-
-      <div className="strip-divider" />
+      {isCore ? (
+        <>
+          <div className="strip-block">
+            <span className="strip-label">Risk / trade</span>
+            <strong className="strip-value mono">${riskUsd ?? "—"}</strong>
+            <span className="strip-hint">Fixed RR exits · {maxHoldHrs ?? 36}h max hold</span>
+          </div>
+          <div className="strip-divider" />
+        </>
+      ) : (
+        <>
+          <div className="strip-block strip-floor">
+            <span className="strip-label">Strength floor</span>
+            <strong className="strip-value mono floor-num">{floor}</strong>
+            <span className="strip-hint">
+              {session.nextFloorDrop ? `↓ ${session.nextFloorDrop}` : "Locked"}
+            </span>
+          </div>
+          <div className="strip-divider" />
+        </>
+      )}
 
       <div className="strip-block strip-trades">
         <span className="strip-label">Trades</span>
@@ -62,17 +77,20 @@ export function SessionStrip({ session, regime, floor }: Props) {
         </span>
       </div>
 
-      <div className="strip-divider" />
-
-      <div className="strip-block">
-        <span className="strip-label">BTC 5m</span>
-        <strong
-          className={`strip-value mono ${session.btcChange5mPct >= 0 ? "pos" : "neg"}`}
-        >
-          {session.btcChange5mPct >= 0 ? "+" : ""}
-          {fmtNum(session.btcChange5mPct, 2)}%
-        </strong>
-      </div>
+      {!isCore && (
+        <>
+          <div className="strip-divider" />
+          <div className="strip-block">
+            <span className="strip-label">BTC 5m</span>
+            <strong
+              className={`strip-value mono ${session.btcChange5mPct >= 0 ? "pos" : "neg"}`}
+            >
+              {session.btcChange5mPct >= 0 ? "+" : ""}
+              {fmtNum(session.btcChange5mPct, 2)}%
+            </strong>
+          </div>
+        </>
+      )}
 
       <div className="strip-playbooks">
         {(session.activePlaybooks ?? []).map((pb) => (

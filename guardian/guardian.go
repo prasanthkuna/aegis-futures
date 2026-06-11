@@ -45,11 +45,17 @@ type InternalPosition struct {
 	PartialPct      float64
 	ATRAtEntry      float64
 	RiskUSD         float64
+	TargetRR        float64
+	MaxHoldHours    float64
+	Paper           bool
 }
 
 func (g *Service) Verify(ctx context.Context, pos *InternalPosition) CheckResult {
 	if pos == nil {
 		return CheckResult{OK: true, Details: "flat"}
+	}
+	if pos.Paper {
+		return CheckResult{OK: true, Details: "paper_simulated"}
 	}
 	if !pos.HasStop || pos.StopPrice <= 0 {
 		return CheckResult{OK: false, Details: "missing_stop", Action: "emergency_close"}
