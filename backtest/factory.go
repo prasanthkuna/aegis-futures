@@ -180,7 +180,7 @@ func generateGrid(spec gridSpec) []RunConfig {
 	return grid
 }
 
-// RunFactory runs the full 1344-config grid (legacy brute force).
+// RunFactory runs the full factory grid (legacy brute force).
 func RunFactory(ctx context.Context, r *Runner, days int, topN int) ([]RankedStrategy, error) {
 	if r == nil {
 		r = NewRunner(nil)

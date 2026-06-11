@@ -16,8 +16,9 @@ func TestGenerateLeanGridCount(t *testing.T) {
 		}
 	}
 	full := GenerateFactoryGrid(60)
-	if len(full) != 1344 {
-		t.Fatalf("full grid: got %d want 1344", len(full))
+	// 12 playbooks × 4 floors × 2 universes × 3 trade caps × 4 exits × 2 sessions
+	if len(full) != 2304 {
+		t.Fatalf("full grid: got %d want 2304", len(full))
 	}
 }
 
