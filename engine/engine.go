@@ -16,7 +16,8 @@ import (
 	"encore.app/market"
 	"encore.app/model"
 	"encore.app/risk"
-	"encore.app/strategy"
+	"encore.app/exit"
+	"encore.app/signal"
 	"encore.app/universe"
 )
 
@@ -37,6 +38,8 @@ type Runtime struct {
 	openPos       *guardian.InternalPosition
 	lastWSHealthy time.Time
 	cgScores      map[string]float64
+	exitMgr       *exit.Manager
+	lastRank      signal.RankOutput
 
 	// OnUniverseChanged is called after universe refresh (e.g. resubscribe WS).
 	OnUniverseChanged func(symbols []string)
@@ -56,6 +59,7 @@ func NewRuntime(
 	return &Runtime{
 		Hub: hub, Universe: uni, Risk: r, Execution: ex, Guardian: g,
 		Ledger: led, Telegram: tg, CoinGlass: cg, Binance: bc,
+		exitMgr: &exit.Manager{Execution: ex},
 		state: model.StateIdle, cgScores: make(map[string]float64),
 		lastWSHealthy: time.Now(),
 	}
@@ -200,18 +204,44 @@ func (rt *Runtime) scan(ctx context.Context) {
 	if rt.State() == model.StateKillSwitch || rt.State() == model.StatePaused {
 		return
 	}
-	rt.Risk.ResetDailyIfNeeded(time.Now())
+	now := time.Now().UTC()
+	rt.Risk.ResetDailyIfNeeded(now)
 	rt.mu.RLock()
-	hasPos := rt.openPos != nil
+	pos := rt.openPos
 	rt.mu.RUnlock()
-	if hasPos {
+	if pos != nil {
+		rt.managePosition(ctx, pos)
 		return
 	}
-	ok, reason := rt.Risk.AllowNewEntry(ctx)
+	ok, _ := rt.Risk.AllowNewEntry(ctx)
 	if !ok {
 		return
 	}
-	btcCh := rt.Hub.BTC5mChangePct()
+	out := rt.rankSignals(now)
+	rt.mu.Lock()
+	rt.lastRank = out
+	rt.mu.Unlock()
+
+	for _, sig := range out.Signals {
+		if !sig.WillFire {
+			continue
+		}
+		rt.tryEnterSignal(ctx, sig)
+		return
+	}
+}
+
+func (rt *Runtime) rankSignals(now time.Time) signal.RankOutput {
+	btc := rt.Hub.BTC5mChangePct()
+	snap := rt.Risk.Get()
+	live := config.Live.Get()
+	armed := snap.TradingEnabled && !snap.Paused && !snap.KillSwitch
+	canTrade := armed && snap.OpenPositions < live.MaxOpenPositions && snap.TradesToday < live.MaxTradesPerDay
+	minTrades := live.MinTradesPerDay
+	if minTrades <= 0 {
+		minTrades = config.MinTradesPerDay
+	}
+	var inputs []signal.SymbolInput
 	for _, sym := range rt.Universe.ActiveSymbols() {
 		st, ok := rt.Hub.Snapshot(sym)
 		if !ok {
@@ -220,26 +250,64 @@ func (rt *Runtime) scan(ctx context.Context) {
 		rt.mu.RLock()
 		cg := rt.cgScores[sym]
 		rt.mu.RUnlock()
-		res := strategy.Evaluate(strategy.Input{
-			Symbol: sym, State: st, CoinGlassScore: cg, BTCChange5mPct: btcCh,
+		inputs = append(inputs, signal.SymbolInput{
+			Symbol: sym, State: st, CoinGlassScore: cg,
+			BTCChange5mPct: btc, IsCore: isCoreSymbol(sym),
 		})
-		if rt.Ledger != nil {
-			_ = rt.Ledger.InsertSetupScore(ctx, sym, res.TradeScore,
-				res.VolumeComponent, res.CVDComponent, res.StructureComponent,
-				res.ContextComponent, res.DepthComponent, res.SessionComponent,
-				res.Decision, res.Reason, string(res.SideHint))
-		}
-		if res.Decision != "trade" {
-			continue
-		}
-		rt.tryEnter(ctx, sym, res)
-		return
 	}
-	_ = reason
+	return signal.Rank(signal.RankInput{
+		Now: now, Symbols: inputs, TradesToday: snap.TradesToday,
+		MinTradesPerDay: minTrades, Armed: armed, CanTrade: canTrade, InPosition: false,
+	})
 }
 
-func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Result) {
-	rt.SetState(ctx, model.StateSetupFound, res.Reason)
+func isCoreSymbol(sym string) bool {
+	for _, c := range config.AlwaysInclude {
+		if c == sym {
+			return true
+		}
+	}
+	return false
+}
+
+func (rt *Runtime) managePosition(ctx context.Context, pos *guardian.InternalPosition) {
+	st, ok := rt.Hub.Snapshot(pos.Symbol)
+	if !ok {
+		return
+	}
+	atr := pos.ATRAtEntry
+	if atr <= 0 {
+		atr = market.ATR(st.Candles5m, 14)
+	}
+	riskUSD := pos.RiskUSD
+	if riskUSD <= 0 {
+		riskUSD = config.Live.Get().RiskPerTradeUSD
+	}
+	act, ok := rt.exitMgr.Evaluate(exit.TickInput{
+		Pos: pos, Mark: st.LastPrice, ATR: atr, RiskUSD: riskUSD,
+		CVDFlip: exit.CVDFlipAgainst(st, pos.Side), StaleHrs: exit.HoldHours(pos),
+	})
+	if !ok {
+		return
+	}
+	if err := rt.exitMgr.Apply(ctx, pos, act); err != nil {
+		log.Printf("exit apply: %v", err)
+		return
+	}
+	if act.ClosePct >= 1 || pos.RemainingQty <= 0 {
+		rt.mu.Lock()
+		rt.openPos = nil
+		rt.mu.Unlock()
+		rt.Risk.SetOpenPositions(0)
+		rt.SetState(ctx, model.StateScanning, act.Reason)
+		_ = rt.Telegram.Send(ctx, "EXIT_"+act.Reason, pos.Symbol)
+	}
+}
+
+func (rt *Runtime) tryEnterSignal(ctx context.Context, sig model.ProSignal) {
+	symbol := sig.Symbol
+	side := sig.Side
+	rt.SetState(ctx, model.StateSetupFound, sig.Playbook)
 	rt.SetState(ctx, model.StateRiskChecking, "ok")
 	rt.SetState(ctx, model.StateOrderPlacing, symbol)
 
@@ -250,17 +318,27 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 		return
 	}
 	cfg := config.Live.Get()
-	qty := execution.RiskQuantity(cfg.ActiveCapitalUSD, cfg.RiskPerTradeUSD, entry,
-		entry*0.005, cfg.MaxLeverage) // provisional stop distance 0.5% for sizing
-	stop := execution.StopPrice(entry, res.SideHint, cfg.RiskPerTradeUSD, qty)
-	qty = execution.RiskQuantity(cfg.ActiveCapitalUSD, cfg.RiskPerTradeUSD, entry, stop, cfg.MaxLeverage)
+	sess := signal.SessionAdjustments(time.Now().UTC(), signal.CurrentSession(time.Now().UTC()))
+	riskUSD := signal.RiskUSDForStrength(sig.Strength, sess)
+	atr := sig.Extra.ATR
+	stopDist := atr * 1.5
+	if stopDist <= 0 {
+		stopDist = entry * 0.005
+	}
+	var stop float64
+	if side == model.SideLong {
+		stop = entry - stopDist
+	} else {
+		stop = entry + stopDist
+	}
+	qty := execution.RiskQuantity(cfg.ActiveCapitalUSD, riskUSD, entry, stop, cfg.MaxLeverage)
 	if qty <= 0 {
-		_ = rt.Ledger.InsertMissedTrade(ctx, symbol, string(res.SideHint), res.TradeScore, "invalid_qty")
+		_ = rt.Ledger.InsertMissedTrade(ctx, symbol, string(side), float64(sig.Strength)/100, "invalid_qty")
 		rt.SetState(ctx, model.StateScanning, "invalid_qty")
 		return
 	}
 	limitPx := entry
-	if res.SideHint == model.SideLong {
+	if side == model.SideLong {
 		limitPx = entry * 0.9999
 	} else {
 		limitPx = entry * 1.0001
@@ -268,10 +346,10 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 
 	rt.SetState(ctx, model.StateEntryPending, symbol)
 	result, err := rt.Execution.PlacePostOnlyEntry(ctx, execution.EntryRequest{
-		Symbol: symbol, Side: res.SideHint, Quantity: qty, LimitPrice: limitPx,
+		Symbol: symbol, Side: side, Quantity: qty, LimitPrice: limitPx,
 	})
 	if err != nil {
-		_ = rt.Ledger.InsertMissedTrade(ctx, symbol, string(res.SideHint), res.TradeScore, err.Error())
+		_ = rt.Ledger.InsertMissedTrade(ctx, symbol, string(side), float64(sig.Strength)/100, err.Error())
 		_ = rt.Telegram.Send(ctx, "ENTRY_MISSED", symbol+": "+err.Error())
 		rt.SetState(ctx, model.StateScanning, "entry_failed")
 		return
@@ -279,27 +357,30 @@ func (rt *Runtime) tryEnter(ctx context.Context, symbol string, res strategy.Res
 
 	rt.SetState(ctx, model.StateEntryFilled, symbol)
 	rt.SetState(ctx, model.StateStopPlacing, symbol)
-	sl, err := rt.Execution.PlaceStopMarket(ctx, symbol, res.SideHint, result.FilledQty, stop)
+	sl, err := rt.Execution.PlaceStopMarket(ctx, symbol, side, result.FilledQty, stop)
 	if err != nil {
 		_ = rt.Telegram.Send(ctx, "STOP_PLACEMENT_FAILED", symbol)
-		_ = rt.Execution.EmergencyClose(ctx, symbol, res.SideHint, result.FilledQty)
+		_ = rt.Execution.EmergencyClose(ctx, symbol, side, result.FilledQty)
 		rt.Risk.Pause()
 		_ = rt.Ledger.InsertRiskEvent(ctx, "critical", "stop_failed", symbol, err.Error(), "emergency_exit")
 		rt.SetState(ctx, model.StatePaused, "stop_failed")
 		return
 	}
-	tp := execution.TakeProfitPrice(result.FilledPx, res.SideHint, 2.0, cfg.RiskPerTradeUSD, result.FilledQty)
-	_, _ = rt.Execution.PlaceTakeProfit(ctx, symbol, res.SideHint, result.FilledQty, tp)
+	tp := execution.TakeProfitPrice(result.FilledPx, side, 2.5, riskUSD, result.FilledQty)
+	_, _ = rt.Execution.PlaceTakeProfit(ctx, symbol, side, result.FilledQty, tp)
 
 	rt.mu.Lock()
 	rt.openPos = &guardian.InternalPosition{
-		ID: 1, Symbol: symbol, Side: res.SideHint,
-		Quantity: result.FilledQty, EntryPrice: result.FilledPx,
-		StopPrice: stop, TakeProfitPrice: tp, HasStop: sl > 0,
-		EntryTime: time.Now().UnixMilli(),
+		ID: 1, Symbol: symbol, Side: side,
+		Quantity: result.FilledQty, RemainingQty: result.FilledQty,
+		EntryPrice: result.FilledPx, StopPrice: stop, TakeProfitPrice: tp,
+		HasStop: sl > 0, StopOrderID: sl, EntryTime: time.Now().UnixMilli(),
+		Playbook: sig.Playbook, StrengthAtEntry: sig.Strength, Session: sig.Session,
+		ExitPhase: "PROTECTED", ATRAtEntry: atr, RiskUSD: riskUSD,
 	}
 	rt.mu.Unlock()
-	_ = rt.Telegram.Send(ctx, "ENTRY_FILLED", symbol)
+	rt.Risk.IncTradesToday()
+	_ = rt.Telegram.Send(ctx, "ENTRY_FILLED", symbol+" "+sig.Playbook)
 	rt.SetState(ctx, model.StateInPosition, symbol)
 }
 

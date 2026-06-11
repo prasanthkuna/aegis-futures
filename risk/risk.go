@@ -74,6 +74,12 @@ func (e *Engine) Kill() {
 	e.mu.Unlock()
 }
 
+func (e *Engine) IncTradesToday() {
+	e.mu.Lock()
+	e.s.TradesToday++
+	e.mu.Unlock()
+}
+
 func (e *Engine) RecordTradeResult(netPnL float64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

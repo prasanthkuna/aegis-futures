@@ -171,66 +171,40 @@ type RadarResponse struct {
 //encore:api public method=GET path=/radar
 func (s *Service) Radar(ctx context.Context) (*RadarResponse, error) {
 	live := config.Live.Get()
-	minScore := live.MinTradeScore
+	out := s.rankSignals(ctx)
+	floor := float64(out.Floor) / 100
+	minScore := floor
 	if minScore <= 0 {
-		minScore = config.MinTradeScore
+		minScore = live.MinTradeScore
 	}
 	watchMin := minScore * 0.85
-	aplus := config.APlusTradeScore
-	btc := s.rt.Hub.BTC5mChangePct()
+	aplus := minScore + 0.12
+	if aplus > 1 {
+		aplus = 0.92
+	}
+
 	riskSnap := s.rt.Risk.Get()
 	armed := tradingEnabled() && !riskSnap.Paused && !riskSnap.KillSwitch
 	openN := riskSnap.OpenPositions
 	if openN == 0 && s.rt.OpenPosition() != nil {
 		openN = 1
 	}
-	canTrade := armed && openN < live.MaxOpenPositions && riskSnap.TradesToday < live.MaxTradesPerDay
+	inPosSym := ""
+	if p := s.rt.OpenPosition(); p != nil {
+		inPosSym = p.Symbol
+	}
 
 	var items []model.SymbolSnapshot
-	for _, sym := range s.rt.Universe.ActiveSymbols() {
-		st, ok := s.rt.Hub.Snapshot(sym)
-		if !ok {
-			continue
-		}
-		cg := s.rt.CoinGlassScore(sym)
-		res := strategy.Evaluate(strategy.Input{
-			Symbol: sym, State: st, CoinGlassScore: cg, BTCChange5mPct: btc,
-		})
-		dec := radarDecision(res, minScore)
-		gap := minScore - res.TradeScore
-		if gap < 0 {
-			gap = 0
-		}
-		pos := s.rt.OpenPosition()
-		inPos := pos != nil && pos.Symbol == sym
-		willFire := canTrade && dec == "trade" && !inPos
-		items = append(items, model.SymbolSnapshot{
-			Symbol: sym, Price: st.LastPrice, QuoteVolume24h: st.QuoteVolume24h,
-			SpreadBps: st.SpreadBps, VolumeSurge: res.VolumeComponent,
-			CVDState: res.CVDState, TakerFlow: res.TakerFlow,
-			OIFundingContext: oiFundingContext(cg), CoinGlassScore: cg,
-			SessionScore: res.SessionComponent, TradeScore: res.TradeScore,
-			Decision: dec, Reason: res.Reason, UpdatedAt: time.Now().UTC(),
-			GapToTrade: gap, WeakestLink: strategy.WeakestLink(res, res.Reason),
-			Tier: strategy.TierLabel(res.TradeScore, minScore, aplus, dec),
-			SideHint: strategy.SideHintString(res.SideHint),
-			Components: strategy.ComponentsFrom(res),
-			Gates:      strategy.GateFlagsFor(res, minScore, btc, st.SpreadBps),
-			BtcRegime:  strategy.BtcRegimeTag(btc),
-			IsCore:     isCoreSymbol(sym),
-			WillFire:   willFire,
-			HasOpenSlot: openN < live.MaxOpenPositions && !inPos,
-		})
+	for _, sig := range out.Signals {
+		items = append(items, proSignalToSnapshot(sig, out.Floor, openN, live.MaxOpenPositions, inPosSym))
 	}
 	s.radar.applyDeltas(items)
-	sortRadarActionability(items)
-	for i := range items {
-		items[i].Rank = i + 1
-	}
 	if items == nil {
 		items = []model.SymbolSnapshot{}
 	}
-	regime := strategy.BuildRegime(items, btc)
+	regime := out.Regime
+	regime.WatchCount = 0
+	regime.SkipCount = 0
 	meta := model.RadarMeta{
 		MinTradeScore: minScore, WatchMinScore: watchMin, APlusTradeScore: aplus,
 		Armed: armed, TradingEnabled: tradingEnabled(), Paused: riskSnap.Paused,

@@ -10,6 +10,8 @@ type Snapshot struct {
 	MaxLeverage       int
 	MaxOpenPositions  int
 	MaxTradesPerDay   int
+	MinTradesPerDay   int
+	TargetTradesPerDay int
 	DailyHardStopUSD  float64
 	WeeklyHardStopUSD float64
 }
@@ -35,8 +37,10 @@ func (l *liveSettings) ApplyDefaults() {
 		MinTradeScore:     MinTradeScore,
 		MaxLeverage:       MaxLeverage,
 		MaxOpenPositions:  MaxOpenPositions,
-		MaxTradesPerDay:   MaxTradesPerDay,
-		DailyHardStopUSD:  DailyHardStopUSD,
+		MaxTradesPerDay:    MaxTradesPerDay,
+		MinTradesPerDay:    MinTradesPerDay,
+		TargetTradesPerDay: TargetTradesPerDay,
+		DailyHardStopUSD:   DailyHardStopUSD,
 		WeeklyHardStopUSD: WeeklyHardStopUSD,
 	}
 }

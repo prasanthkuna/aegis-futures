@@ -30,11 +30,21 @@ type InternalPosition struct {
 	Symbol          string
 	Side            model.Side
 	Quantity        float64
+	RemainingQty    float64
 	EntryPrice      float64
 	StopPrice       float64
 	TakeProfitPrice float64
 	EntryTime       int64 // unix ms
 	HasStop         bool
+	StopOrderID     int64
+	Playbook        string
+	StrengthAtEntry int
+	Session         string
+	ExitPhase       string
+	PeakR           float64
+	PartialPct      float64
+	ATRAtEntry      float64
+	RiskUSD         float64
 }
 
 func (g *Service) Verify(ctx context.Context, pos *InternalPosition) CheckResult {

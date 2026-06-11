@@ -6,10 +6,12 @@ import "time"
 const (
 	AccountCapitalUSD     = 1000.0
 	ActiveCapitalUSD      = 250.0
-	MaxLeverage           = 2
+	MaxLeverage           = 3
 	RiskPerTradeUSD       = 1.25
 	MaxOpenPositions      = 1
 	MaxTradesPerDay       = 6
+	MinTradesPerDay       = 2
+	TargetTradesPerDay    = 4
 	DailyHardStopUSD      = 7.5
 	WeeklyHardStopUSD     = 20.0
 	MaxConsecutiveLosses  = 3
